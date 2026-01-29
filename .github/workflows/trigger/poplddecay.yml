@@ -1,0 +1,44 @@
+# PopLDdecay专属触发工作流 - 轻量，仅传递参数+调用复用工作流
+# 触发方式：1. 修改PopLDdecay配置自动编译 2. 手动选择版本编译
+name: 编译 - PopLDdecay（全版本）
+
+# 触发条件
+on:
+  # 自动触发：仅修改PopLDdecay相关配置/脚本时
+  push:
+    paths:
+      - 'softwares/poplddecay/**'
+      - 'scripts/**'
+      - '.github/workflows/reusable/build-cross.yml'
+  # 手动触发：GitHub页面选择版本编译（推荐）
+  workflow_dispatch:
+    inputs:
+      soft_version:
+        description: '选择PopLDdecay编译版本'
+        required: true
+        default: 'v3.43'
+        type: choice
+        options:
+          - v3.43
+          # 新增版本只需在这里添加即可
+          # - v3.44
+          # - v3.45
+      build_arch:
+        description: '选择编译架构'
+        required: true
+        default: 'x64'
+        type: choice
+        options:
+          - x64
+          - arm64
+
+# 调用复用工作流，无其他逻辑
+jobs:
+  poplddecay-cross-build:
+    name: PopLDdecay-${{ github.event.inputs.soft_version }}
+    uses: ./.github/workflows/reusable/build-cross.yml
+    with:
+      soft_name: 'poplddecay'
+      soft_version: ${{ github.event.inputs.soft_version }}
+      build_arch: ${{ github.event.inputs.build_arch }}
+    secrets: inherit  # 继承仓库密钥（扩展Release上传时需要）

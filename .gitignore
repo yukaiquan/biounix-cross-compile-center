@@ -1,0 +1,25 @@
+# 本地编译产物/临时目录
+/build/
+/logs/
+/source_cache/
+/tmp/
+
+# 日志文件
+*.log
+*.tmp
+*.out
+
+# IDE/编辑器配置
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# 系统临时文件
+*~
+\#*#
+
+# 产物校验和文件
+*.md5
+*.sha256
