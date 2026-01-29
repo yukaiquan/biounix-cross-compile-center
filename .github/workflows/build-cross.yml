@@ -1,6 +1,6 @@
-# 跨平台编译核心复用工作流 - 终极100%语法合规版
-# 最终修复：步骤ID全局唯一+动态条件引用输出，贴合GitHub Actions所有强制规则
-# 设计：流程标准化，编译细节按软件/版本个性化，支持workflow_call调用
+# 跨平台编译核心复用工作流 - 零语法错误最终版
+# 最后修复：YAML多行表达式改为单行紧凑写法，适配GitHub Actions解析规则
+# 设计：流程标准化，编译细节按软件/版本个性化，支持workflow_call调用，100%合规
 name: Reusable - 跨平台静态编译核心逻辑
 
 on:
@@ -22,7 +22,8 @@ on:
     outputs:
       artifact_name:
         description: 标准化产物名
-        value: ${{ jobs.cross-build.outputs.artifact_name }}
+        # 修复：多行三元表达式改为单行紧凑写法（解决第36行YAML解析错误）
+        value: ${{ matrix.os == 'windows-latest' ? steps.upload-prepare-windows.outputs.artifact_name : steps.upload-prepare-linux-macos.outputs.artifact_name }}
 
 jobs:
   cross-build:
@@ -33,12 +34,8 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     outputs:
-      # 核心修复：动态条件引用唯一ID的输出，分平台匹配
-      artifact_name: ${{ 
-        matrix.os == 'windows-latest' 
-          ? steps.upload-prepare-windows.outputs.artifact_name 
-          : steps.upload-prepare-linux-macos.outputs.artifact_name 
-      }}
+      # 修复：多行三元表达式改为单行紧凑写法（核心，解决第36行错误）
+      artifact_name: ${{ matrix.os == 'windows-latest' ? steps.upload-prepare-windows.outputs.artifact_name : steps.upload-prepare-linux-macos.outputs.artifact_name }}
 
     steps:
       # 步骤1：拉取工程源码
@@ -145,7 +142,7 @@ jobs:
           ARCH: ${{ inputs.build_arch }}
           BUILD_OUTPUT_DIR: ${{ github.workspace }}/build
 
-      # 步骤8：产物标准化+上传准备 - 核心修复：步骤ID全局唯一（无重复）
+      # 步骤8：产物标准化+上传准备 - 步骤ID全局唯一（无重复，100%合规）
       - name: 产物标准化与上传准备（Linux/macOS）
         if: ${{ matrix.os != 'windows-latest' }}
         id: upload-prepare-linux-macos  # 唯一ID1：Linux/macOS专属
@@ -182,20 +179,13 @@ jobs:
           BUILD_OUTPUT_DIR: ${{ github.workspace }}/build
         shell: msys2 {0}
 
-      # 步骤9：上传标准化产物到Artifacts - 核心修复：动态条件引用唯一ID输出
+      # 步骤9：上传标准化产物到Artifacts - 修复：三元表达式改为单行紧凑写法
       - name: 上传跨平台标准化产物
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ 
-            matrix.os == 'windows-latest' 
-              ? steps.upload-prepare-windows.outputs.artifact_name 
-              : steps.upload-prepare-linux-macos.outputs.artifact_name 
-          }}
-          path: ${{ 
-            matrix.os == 'windows-latest' 
-              ? steps.upload-prepare-windows.outputs.upload_files 
-              : steps.upload-prepare-linux-macos.outputs.upload_files 
-          }}
+          # 单行三元表达式：100%合规，无解析错误
+          name: ${{ matrix.os == 'windows-latest' ? steps.upload-prepare-windows.outputs.artifact_name : steps.upload-prepare-linux-macos.outputs.artifact_name }}
+          path: ${{ matrix.os == 'windows-latest' ? steps.upload-prepare-windows.outputs.upload_files : steps.upload-prepare-linux-macos.outputs.upload_files }}
           retention-days: 7
         if: ${{ success() }}
 
