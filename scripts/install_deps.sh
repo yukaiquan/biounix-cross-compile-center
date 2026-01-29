@@ -53,12 +53,12 @@ case ${PLATFORM} in
         # Homebrew：核心修复！去掉-y参数（brew无此选项）
         log_info "更新brew并安装依赖"
         brew update || log_info "brew更新失败，继续安装依赖"
-        brew install ${FINAL_DEPS} || log_error "brew安装依赖失败"
+        brew install ${FINAL_DEPS} autoconf automake libtool || log_error "brew安装依赖失败"
         ;;
     windows)
         # Windows-MSYS2/MINGW64：用pacman安装
         log_info "更新pacman并安装依赖"
-        pacman -Syu --noconfirm ${FINAL_DEPS} || log_error "pacman安装依赖失败"
+        pacman -Syu --noconfirm ${FINAL_DEPS} git || log_error "pacman安装依赖失败"
         ;;
     *)
         log_error "不支持的平台：${PLATFORM}"
