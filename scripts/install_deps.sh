@@ -28,13 +28,19 @@ log_info "Installing dependencies for ${OS_TYPE}..."
 case "$OS_TYPE" in
   linux)
     sudo apt-get update
-    sudo apt-get install -y $DEPS_APT
+    if [ "${ARCH_TYPE}" == "arm64" ]; then
+        # 安装 arm64 版本的 zlib 库
+        sudo dpkg --add-architecture arm64
+        sudo apt-get update
+        sudo apt-get install -y zlib1g-dev:arm64 gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+    else
+        sudo apt-get install -y build-essential zlib1g-dev
+    fi
     ;;
   macos)
-    brew install $DEPS_BREW
+    brew install zlib
     ;;
   windows)
-    # 只要是在 MSYS2 环境下运行，这个命令就能找到
-    pacman -S --noconfirm --needed $DEPS_MSYS2
+    pacman -S --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-zlib
     ;;
 esac

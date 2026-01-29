@@ -43,7 +43,7 @@ jobs:
           ALL_PLATFORMS='{
             "include": [
               {"id": "linux-x64", "os-type": "linux", "arch": "x64", "runner": "ubuntu-latest"},
-              {"id": "linux-arm64", "os-type": "linux", "arch": "arm64", "runner": "ubuntu-24.04-arm64"},
+              {"id": "linux-arm64", "os-type": "linux", "arch": "arm64", "runner": "ubuntu-latest"},
               {"id": "macos-arm64", "os-type": "macos", "arch": "arm64", "runner": "macos-latest"},
               {"id": "macos-x64", "os-type": "macos", "arch": "x64", "runner": "macos-15-intel"},
               {"id": "windows-x64", "os-type": "windows", "arch": "x64", "runner": "windows-latest","mshell": "msys2 {0}"}
