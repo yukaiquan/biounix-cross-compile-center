@@ -1,19 +1,31 @@
 name: BioUnix Cross Build
 
 on:
-  # 支持手动从 Actions 页面运行
+  # 支持从 Actions 页面手动点击运行
   workflow_dispatch:
     inputs:
       software:
-        description: 'Software name (folder name in softwares/)'
+        description: '软件名称 (对应 softwares/ 下的目录名)'
         required: true
         default: 'poplddecay'
       version:
-        description: 'Software version (folder name in softwares/NAME/)'
+        description: '软件版本 (对应 softwares/软件名/ 下的版本目录)'
         required: true
         default: 'v3.43'
-  
-  # 【关键】支持被 dispatch.yml 调用
+      platform:
+        description: '目标平台与架构 (选择 all 则并行全部编译)'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - linux-x64
+          - linux-arm64
+          - macos-x64
+          - macos-arm64
+          - windows-x64
+
+  # 支持被 dispatch.yml 或其他 workflow 调用
   workflow_call:
     inputs:
       software:
@@ -22,38 +34,50 @@ on:
       version:
         required: true
         type: string
+      platform:
+        required: true
+        type: string
 
 jobs:
   build:
-    name: ${{ matrix.os-name }}-${{ matrix.arch }}
+    name: ${{ matrix.id }}
     runs-on: ${{ matrix.runner }}
+    # 核心判断：如果选了 all，或者选了当前的 id，则运行
+    if: |
+      inputs.platform == 'all' || 
+      inputs.platform == matrix.id
     
     strategy:
-      fail-fast: false
+      fail-fast: false # 其中一个失败不影响其他平台
       matrix:
         include:
-          # Linux x86_64
-          - os-name: linux
+          # --- Linux 编译节点 ---
+          - id: linux-x64
+            os-type: linux
             arch: x64
             runner: ubuntu-latest
-          # Linux ARM64
-          - os-name: linux
+          - id: linux-arm64
+            os-type: linux
             arch: arm64
-            runner: ubuntu-24.04-arm64
-          # macOS Apple Silicon (M1/M2/M3)
-          - os-name: macos
+            runner: ubuntu-24.04-arm64 # 使用 GitHub 原生 ARM 运行器
+
+          # --- macOS 编译节点 ---
+          - id: macos-arm64
+            os-type: macos
             arch: arm64
-            runner: macos-latest
-          # macOS Intel
-          - os-name: macos
+            runner: macos-latest # Apple Silicon (M1/M2)
+          - id: macos-x64
+            os-type: macos
             arch: x64
-            runner: macos-13
-          # Windows x64
-          - os-name: windows
+            runner: macos-13    # Intel Mac
+
+          # --- Windows 编译节点 ---
+          - id: windows-x64
+            os-type: windows
             arch: x64
             runner: windows-latest
 
-    # 强制所有步骤在所有平台上使用 bash (包括 Windows)
+    # 强制所有步骤在 Bash 下运行，确保 Windows/Linux 脚本语法统一
     defaults:
       run:
         shell: bash
@@ -62,9 +86,9 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # Windows 专用环境初始化
+      # Windows 特殊环境处理：安装 MSYS2 和必备工具链
       - name: Setup MSYS2 (Windows Only)
-        if: matrix.os-name == 'windows'
+        if: matrix.os-type == 'windows'
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
@@ -73,44 +97,62 @@ jobs:
             base-devel
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-zlib
+            mingw-w64-x86_64-toolchain
 
-      # 环境准备：统一输入变量名
-      - name: Set Environment
+      # 导出环境变量供后续步骤使用
+      - name: Prepare Environment
         run: |
           echo "S_NAME=${{ inputs.software }}" >> $GITHUB_ENV
           echo "S_VER=${{ inputs.version }}" >> $GITHUB_ENV
-          if [ "${{ matrix.os-name }}" == "windows" ]; then
+          echo "S_ID=${{ matrix.id }}" >> $GITHUB_ENV
+          
+          # 根据系统设置后缀
+          if [ "${{ matrix.os-type }}" == "windows" ]; then
             echo "EXE_EXT=.exe" >> $GITHUB_ENV
           else
             echo "EXE_EXT=" >> $GITHUB_ENV
           fi
 
-      # 执行项目 scripts/ 目录下的通用脚本
+      # 步骤 1: 安装依赖
       - name: Install Dependencies
-        run: bash scripts/install_deps.sh ${{ env.S_NAME }} ${{ env.S_VER }}
+        run: |
+          bash scripts/install_deps.sh ${{ env.S_NAME }} ${{ env.S_VER }}
 
+      # 步骤 2: 下载并解压源码
       - name: Fetch Source
         run: |
+          # 运行下载脚本，并捕获 SRC_PATH 到 GITHUB_ENV
           bash scripts/fetch_source.sh ${{ env.S_NAME }} ${{ env.S_VER }}
-          # 假设 fetch_source.sh 会导出 SRC_PATH 到 $GITHUB_ENV 或文件
-          if [ -f "build_env.txt" ]; then source build_env.txt; fi
-
-      - name: Build
-        run: |
-          source config/global.env
-          bash softwares/${{ env.S_NAME }}/${{ env.S_VER }}/build.sh
-
-      # 收集产物
-      - name: Prepare Artifacts
-        run: |
-          mkdir -p output_bin
-          if [ -d "dist/bin" ]; then
-            cp -r dist/bin/* output_bin/
+          # 技巧：如果脚本在子进程中设置了环境变量，我们可以通过文件传递回当前 Shell
+          if [ -f "build_env.txt" ]; then
+            cat build_env.txt >> $GITHUB_ENV
           fi
 
+      # 步骤 3: 运行软件特有的编译脚本
+      - name: Build Software
+        run: |
+          source config/global.env
+          # 执行 softwares/xxx/xxx/build.sh
+          bash softwares/${{ env.S_NAME }}/${{ env.S_VER }}/build.sh
+
+      # 步骤 4: 收集编译产物
+      - name: Organize Artifacts
+        run: |
+          mkdir -p final_dist
+          # 拷贝编译出的 bin 到上传目录
+          if [ -d "dist/bin" ]; then
+            cp -r dist/bin/* final_dist/
+          fi
+          # 生成一个简单的构建描述文件
+          echo "Package: ${{ env.S_NAME }}" > final_dist/build.log
+          echo "Version: ${{ env.S_VER }}" >> final_dist/build.log
+          echo "Platform: ${{ matrix.id }}" >> final_dist/build.log
+
+      # 步骤 5: 上传到 GitHub Actions (Artifacts 区域)
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.S_NAME }}-${{ env.S_VER }}-${{ matrix.os-name }}-${{ matrix.arch }}
-          path: output_bin/
-          retention-days: 7
+          # 产物名称格式: poplddecay-v3.43-linux-arm64
+          name: ${{ env.S_NAME }}-${{ env.S_VER }}-${{ matrix.id }}
+          path: final_dist/
+          retention-days: 30

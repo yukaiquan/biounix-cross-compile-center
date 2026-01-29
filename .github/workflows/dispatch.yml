@@ -1,25 +1,34 @@
 name: Build Dispatcher
 
 on:
-  # 手动触发分发
   workflow_dispatch:
     inputs:
       software:
-        description: 'Which software to build?'
+        description: '软件名称'
         required: true
         default: 'poplddecay'
       version:
-        description: 'Which version?'
+        description: '软件版本'
         required: true
         default: 'v3.43'
+      platform:
+        description: '目标平台 (选择 all 则全部编译)'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - linux-x64
+          - linux-arm64
+          - macos-x64
+          - macos-arm64
+          - windows-x64
 
 jobs:
-  # 调用上面的 build-cross.yml
   trigger-build:
-    # 引用当前仓库下的 build-cross.yml
     uses: ./.github/workflows/build-cross.yml
     with:
       software: ${{ github.event.inputs.software }}
       version: ${{ github.event.inputs.version }}
-    # 这里的 secrets 传递（如果需要）
+      platform: ${{ github.event.inputs.platform }}
     secrets: inherit
