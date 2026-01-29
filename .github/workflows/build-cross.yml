@@ -30,19 +30,17 @@ on:
 jobs:
   cross-build:
     name: ${{ matrix.os }}-${{ inputs.build_arch }}
-    # 多平台Runner矩阵（GitHub官方原生Runner，稳定）
     strategy:
       fail-fast: false  # 一个平台失败，其他平台继续编译
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        # 架构映射：Runner -> 目标架构
         include:
           - os: ubuntu-latest
             platform: linux
             shell: bash
           - os: windows-latest
             platform: windows
-            shell: msys2 {0}  # Windows必须用MSYS2 shell，兼容bash脚本
+            shell: msys2 {0}  # Windows必须用MSYS2 shell，兼容bash/source
           - os: macos-latest
             platform: macos
             shell: bash
@@ -51,28 +49,26 @@ jobs:
     outputs:
       artifact_name: ${{ steps.upload-prepare.outputs.artifact_name }}
     steps:
-      # 步骤1：拉取编译工程仓库源码（本仓库，含脚本/配置/软件配置）
+      # 步骤1：拉取编译工程仓库源码（本仓库）
       - name: 拉取编译工程源码
         uses: actions/checkout@v4
         with:
           fetch-depth: 1  # 浅克隆，提升速度
 
-      # 步骤2：Windows专属 - 配置MSYS2/MINGW64环境（必须在其他步骤前）
+      # 步骤2：Windows专属 - 配置MSYS2/MINGW64环境（必须前置）
       - name: Windows配置MSYS2/MINGW64
         if: matrix.platform == 'windows'
         uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64  # 固定64位，与config/platform.env一致
-          update: true      # 更新MSYS2
-          install: base-devel  # 基础工具
+          msystem: MINGW64
+          update: true
+          install: base-devel  # 基础工具，包含bash/source
 
-      # 步骤3：缓存依赖/源码（核心优化，减少编译时间）
+      # 步骤3：配置缓存（减少依赖下载/源码拉取时间）
       - name: 配置缓存
         uses: actions/cache@v3
         with:
-          # 按平台划分缓存键，避免冲突
           key: ${{ matrix.os }}-${{ inputs.build_arch }}-${{ inputs.soft_name }}-${{ inputs.soft_version }}
-          # 缓存目录：源码缓存+平台依赖缓存
           path: |
             ${{ github.workspace }}/source_cache/
             /var/cache/apt/archives/
@@ -81,12 +77,12 @@ jobs:
             /usr/local/Cellar/
             /Users/runner/Library/Caches/Homebrew/
 
-      # 步骤4：初始化日志目录（CI日志）
+      # 步骤4：初始化日志目录
       - name: 初始化日志目录
         run: mkdir -p ${{ github.workspace }}/logs/${{ inputs.soft_name }}/${{ inputs.soft_version }}
         shell: ${{ matrix.shell }}
 
-      # 步骤5：安装软件依赖（调用通用脚本install_deps.sh）
+      # 步骤5：安装软件依赖（调用通用脚本）
       - name: 安装编译依赖
         id: install-deps
         run: |
@@ -94,7 +90,7 @@ jobs:
           ${{ github.workspace }}/scripts/install_deps.sh ${{ inputs.soft_name }} ${{ inputs.soft_version }}
         shell: ${{ matrix.shell }}
 
-      # 步骤6：拉取软件源码（调用通用脚本fetch_source.sh，输出源码目录）
+      # 步骤6：拉取软件源码（调用通用脚本，输出SOURCE_DIR到环境变量）
       - name: 拉取软件源码
         id: fetch-source
         run: |
@@ -102,35 +98,44 @@ jobs:
           echo "SOURCE_DIR=$SOURCE_DIR" >> $GITHUB_ENV
         shell: ${{ matrix.shell }}
 
-      # 步骤7：执行软件专属编译脚本（build.sh）- 核心编译步骤
+      # 步骤7：执行软件专属编译脚本（核心步骤，修复：动态加载config.env）
       - name: 执行专属编译脚本
         id: build-soft
         run: |
+          # 1. 定义config.env路径（标准化）
+          SOFT_CONFIG="${{ github.workspace }}/softwares/${{ inputs.soft_name }}/${{ inputs.soft_version }}/config.env"
+          # 2. 加载配置文件（替代原env块的非法写法，标准source方式）
+          source $SOFT_CONFIG
+          # 3. 进入源码目录
           cd ${{ env.SOURCE_DIR }}
+          # 4. 赋予编译脚本执行权限
           chmod +x ${{ github.workspace }}/softwares/${{ inputs.soft_name }}/${{ inputs.soft_version }}/build.sh
+          # 5. 执行编译脚本（此时所有config.env变量已加载到当前shell）
           ${{ github.workspace }}/softwares/${{ inputs.soft_name }}/${{ inputs.soft_version }}/build.sh
         shell: ${{ matrix.shell }}
         env:
+          # 仅保留静态键值对（符合YAML规范）
           SOFT_NAME: ${{ inputs.soft_name }}
           SOFT_VERSION: ${{ inputs.soft_version }}
           PLATFORM: ${{ matrix.platform }}
           ARCH: ${{ inputs.build_arch }}
           BUILD_OUTPUT_DIR: ${{ github.workspace }}/build
-          $(cat ${{ github.workspace }}/softwares/${{ inputs.soft_name }}/${{ inputs.soft_version }}/config.env | grep -v '^#')
 
-      # 步骤8：产物标准化+验证+准备上传（修复第126行核心错误）
+      # 步骤8：产物标准化+验证+准备上传（修复过的if判断，无语法问题）
       - name: 产物标准化与验证
         id: upload-prepare
         run: |
+          # 加载配置文件（获取OUTPUT_NAME等变量）
+          source ${{ github.workspace }}/softwares/${{ inputs.soft_name }}/${{ inputs.soft_version }}/config.env
           # 基础产物路径
           ORIGIN_ARTIFACT="${{ github.workspace }}/build/${{ env.OUTPUT_NAME }}"
-          # Windows添加.exe后缀（第126行附近修复的核心处）
+          # Windows添加.exe后缀（POSIX标准语法，全平台兼容）
           if [ "${{ matrix.platform }}" = "windows" ]; then
               ORIGIN_ARTIFACT="${ORIGIN_ARTIFACT}.exe"
           fi
-          # 调用上传脚本
+          # 调用上传准备脚本，输出待上传文件
           UPLOAD_FILES=$(${{ github.workspace }}/scripts/upload_artifact.sh ${{ inputs.soft_name }} ${{ inputs.soft_version }} $ORIGIN_ARTIFACT)
-          # 输出变量给后续步骤
+          # 输出变量给后续步骤（GitHub Actions新语法）
           echo "artifact_name=${{ env.ARTIFACT_NAME }}" >> $GITHUB_OUTPUT
           echo "upload_files=$UPLOAD_FILES" >> $GITHUB_OUTPUT
         shell: ${{ matrix.shell }}
@@ -145,9 +150,9 @@ jobs:
           name: ${{ steps.upload-prepare.outputs.artifact_name }}
           path: ${{ steps.upload-prepare.outputs.upload_files }}
           retention-days: 30
-          if-no-files-found: error
+          if-no-files-found: error  # 无产物文件则直接失败
 
-      # 步骤10：上传编译日志（无论成败都上传）
+      # 步骤10：上传编译日志（无论成败都上传，方便排查问题）
       - name: 上传编译日志
         uses: actions/upload-artifact@v4
         if: always()
