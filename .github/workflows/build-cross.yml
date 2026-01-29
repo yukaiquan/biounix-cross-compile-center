@@ -70,9 +70,10 @@ jobs:
         run: mkdir -p ${{ github.workspace }}/logs/${{ inputs.soft_name }}/${{ inputs.soft_version }}
       - name: 初始化日志目录（Windows）
         if: ${{ matrix.os == 'windows-latest' }}
-        run: mkdir -p ${{ github.workspace }}/logs/${{ inputs.soft_name }}/${{ inputs.soft_version }}
+        run: |
+          cd $GITHUB_WORKSPACE
+          mkdir -p logs/${{ inputs.soft_name }}/${{ inputs.soft_version }}
         shell: msys2 {0}
-
       # 步骤5：安装编译依赖 - 分平台
       - name: 安装编译依赖（Linux/macOS）
         if: ${{ matrix.os != 'windows-latest' }}
@@ -82,11 +83,22 @@ jobs:
       - name: 安装编译依赖（Windows）
         if: ${{ matrix.os == 'windows-latest' }}
         run: |
-          cd ${{ github.workspace }}  # 核心：先切到工作目录，用相对路径
-          chmod +x scripts/*.sh
+          # 核心：用MSYS2能识别的环境变量，无注释、带目录验证
+          echo "当前工作目录：$GITHUB_WORKSPACE"
+          ls -l $GITHUB_WORKSPACE
+          cd $GITHUB_WORKSPACE
+          # 验证scripts文件夹是否存在
+          if [ -d "scripts" ]; then
+              echo "scripts文件夹存在，开始赋权"
+              chmod +x scripts/*.sh
+          else
+              echo "scripts文件夹不存在，列出当前所有目录"
+              ls -l
+              exit 1
+          fi
+          # 执行依赖安装脚本
           scripts/install_deps.sh ${{ inputs.soft_name }} ${{ inputs.soft_version }}
         shell: msys2 {0}
-
       # 步骤6：拉取软件源码 - 分平台
       - name: 拉取软件源码（Linux/macOS）
         if: ${{ matrix.os != 'windows-latest' }}
