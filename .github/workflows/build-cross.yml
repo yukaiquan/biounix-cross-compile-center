@@ -151,19 +151,28 @@ jobs:
           SOFT_NAME: ${{ inputs.soft_name }}
           SOFT_VERSION: ${{ inputs.soft_version }}
           PLATFORM: windows
-          ARCH: x64
-          # 核心修正：BUILD_OUTPUT_DIR改为类Unix路径（MSYS2可识别）
-          BUILD_OUTPUT_DIR: /d/a/biounix-cross-compile-center/biounix-cross-compile-center/build
-      # 步骤8：产物标准化与验证 - 核心修复：ID唯一！！！
+          ARCH: ${{ inputs.build_arch }}  # 改为传参，不写死x64
+          # 标准化路径：基于GITHUB_WORKSPACE，MSYS2可识别
+          BUILD_OUTPUT_DIR: $GITHUB_WORKSPACE/build
+            # 步骤8：产物标准化与验证 - 核心修复：ID唯一！！！
       - name: 产物标准化与验证（Linux/macOS）
         if: ${{ matrix.os != 'windows-latest' }}
         id: upload-prepare-linux-macos  # 唯一ID1
+      - name: 产物标准化与验证（Linux/macOS）
+        if: ${{ matrix.os != 'windows-latest' }}
+        id: upload-prepare-linux-macos
         run: |
           source ${{ github.workspace }}/softwares/${{ inputs.soft_name }}/${{ inputs.soft_version }}/config.env
+          # 按系统定义PLATFORM，与个性化配置对齐
+          PLATFORM=${{ matrix.os == 'ubuntu-latest' && 'linux' || 'macos' }}
+          echo "PLATFORM=$PLATFORM" >> $GITHUB_ENV
+          # 产物路径：Linux/macOS无exe后缀
           ORIGIN_ARTIFACT="${{ github.workspace }}/build/${{ env.OUTPUT_NAME }}"
           UPLOAD_FILES=$(${{ github.workspace }}/scripts/upload_artifact.sh ${{ inputs.soft_name }} ${{ inputs.soft_version }} $ORIGIN_ARTIFACT)
           echo "artifact_name=${{ env.ARTIFACT_NAME }}" >> $GITHUB_OUTPUT
           echo "upload_files=$UPLOAD_FILES" >> $GITHUB_OUTPUT
+        env:
+          ARCH: ${{ inputs.build_arch }}
       - name: 产物标准化与验证（Windows）
         if: ${{ matrix.os == 'windows-latest' }}
         id: upload-prepare-windows  # 唯一ID2（不再重复）

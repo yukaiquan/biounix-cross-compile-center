@@ -1,69 +1,46 @@
 #!/bin/bash
-# 通用依赖安装脚本 - 按软件/版本/平台安装编译依赖
-# 入参：$1=软件名 $2=版本号
-# 修复：跨平台包名适配（zlib1g-dev → 各平台对应包名）、macOS brew去掉-y参数、Linux安装coreutils
+# 标准化依赖安装脚本
+# 被build-cross.yml调用，传参：soft_name(软件名)、soft_version(版本号)
+# 从softwares/soft_name/soft_version/config.env读取DEPENDENCIES参数，个性化安装依赖
+# 跨平台支持：linux(ubuntu/debian)、macos(brew)、windows(msys2/pacman)
 
-# 引入工具函数
-SCRIPT_DIR=$(cd $(dirname $0) && pwd)
-source ${SCRIPT_DIR}/utils.sh
+set -e
+log_info() { echo -e "\033[32m[SCRIPTS-INSTALL-DEPS] $1\033[0m"; }
+log_error() { echo -e "\033[31m[SCRIPTS-INSTALL-DEPS] $1\033[0m"; exit 1; }
 
-# 检查入参
-if [ $# -ne 2 ]; then
-    log_error "入参错误！用法：$0 <软件名> <版本号>"
+# 步骤1：验证传参（来自标准化工作流）
+if [ $# -ne 2 ]; then log_error "传参错误！用法：$0 <soft_name> <soft_version>"; fi
+SOFT_NAME="$1"
+SOFT_VERSION="$2"
+# 验证软件个性化配置文件
+CONFIG_ENV="$GITHUB_WORKSPACE/softwares/$SOFT_NAME/$SOFT_VERSION/config.env"
+if [ ! -f "$CONFIG_ENV" ]; then log_error "软件个性化配置文件不存在！$CONFIG_ENV"; fi
+# 加载软件个性化依赖配置
+source "$CONFIG_ENV" || log_error "加载软件个性化配置失败！"
+if [ -z "$DEPENDENCIES" ]; then log_error "软件未定义DEPENDENCIES！请检查$CONFIG_ENV"; fi
+log_info "开始安装[$SOFT_NAME-$SOFT_VERSION]依赖：$DEPENDENCIES"
+
+# 步骤2：跨平台依赖安装（标准化，所有软件复用）
+# 识别平台（与工作流PLATFORM对齐）
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "mingw" ]]; then
+    PLATFORM="windows"
+    # Windows-MSYS2：pacman安装，适配zlib-devel（系统依赖名）
+    DEPS_PACMAN=$(echo "$DEPENDENCIES" | sed 's/zlib/zlib-devel/g')
+    log_info "Windows-MSYS2安装依赖：pacman -Syu --noconfirm $DEPS_PACMAN"
+    pacman -Syu --noconfirm $DEPS_PACMAN || log_error "Windows依赖安装失败！"
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+    PLATFORM="macos"
+    # macOS：brew安装，标准化依赖名
+    log_info "macOS安装依赖：brew install $DEPENDENCIES"
+    brew install $DEPENDENCIES || log_error "macOS依赖安装失败！请检查brew是否安装";
+elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    PLATFORM="linux"
+    # Linux-Ubuntu：apt安装，适配zlib1g-dev（系统依赖名）
+    DEPS_APT=$(echo "$DEPENDENCIES" | sed -e 's/gcc/g++/g' -e 's/zlib/zlib1g-dev/g')
+    log_info "Linux-Ubuntu安装依赖：apt update -y && apt install -y $DEPS_APT"
+    apt update -y && apt install -y $DEPS_APT || log_error "Linux依赖安装失败！"
+else
+    log_error "不支持的平台！仅支持linux/macos/windows-MSYS2";
 fi
 
-SOFT_NAME=$1
-SOFT_VERSION=$2
-PLATFORM=$(detect_os)
-log_info "开始安装依赖 | 软件：${SOFT_NAME} | 版本：${SOFT_VERSION} | 平台：${PLATFORM}"
-
-# 加载软件专属依赖配置
-DEPS_CONFIG="${SCRIPT_DIR}/../softwares/${SOFT_NAME}/${SOFT_VERSION}/deps.env"
-if [ ! -f "${DEPS_CONFIG}" ]; then
-    log_error "依赖配置文件不存在：${DEPS_CONFIG}"
-fi
-source ${DEPS_CONFIG}
-log_info "原始依赖包：${DEPS}"
-
-# 核心：跨平台包名适配（解决zlib1g-dev在macOS/Windows不存在的问题）
-case ${PLATFORM} in
-    linux)
-        # Linux保留原始依赖（zlib1g-dev）
-        FINAL_DEPS=${DEPS}
-        ;;
-    macos|windows)
-        # macOS/Windows把zlib1g-dev替换成zlib
-        FINAL_DEPS=$(echo ${DEPS} | sed 's/zlib1g-dev/zlib/g')
-        ;;
-    *)
-        log_error "不支持的平台：${PLATFORM}"
-        ;;
-esac
-log_info "平台适配后依赖包：${FINAL_DEPS}"
-
-# 按平台安装依赖（用适配后的FINAL_DEPS）
-case ${PLATFORM} in
-    linux)
-        # Ubuntu/Debian：先装coreutils，解决基础命令缺失
-        log_info "更新apt并安装依赖"
-        sudo apt-get update -y
-        sudo apt-get install -y coreutils ${FINAL_DEPS} || log_error "apt安装依赖失败"
-        ;;
-    macos)
-        # Homebrew：核心修复！去掉-y参数（brew无此选项）
-        log_info "更新brew并安装依赖"
-        brew update || log_info "brew更新失败，继续安装依赖"
-        brew install ${FINAL_DEPS} autoconf automake libtool || log_error "brew安装依赖失败"
-        ;;
-    windows)
-        # Windows-MSYS2/MINGW64：用pacman安装
-        log_info "更新pacman并安装依赖"
-        pacman -Syu --noconfirm ${FINAL_DEPS} git autoconf automake libtool || log_error "pacman安装依赖失败"
-        ;;
-    *)
-        log_error "不支持的平台：${PLATFORM}"
-        ;;
-esac
-
-log_info "依赖安装完成 | 软件：${SOFT_NAME} | 版本：${SOFT_VERSION}"
-exit 0
+log_info "✅ [$SOFT_NAME-$SOFT_VERSION]依赖安装完成！PLATFORM=$PLATFORM"
