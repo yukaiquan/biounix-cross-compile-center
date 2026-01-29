@@ -46,7 +46,7 @@ jobs:
               {"id": "linux-arm64", "os-type": "linux", "arch": "arm64", "runner": "ubuntu-24.04-arm64"},
               {"id": "macos-arm64", "os-type": "macos", "arch": "arm64", "runner": "macos-latest"},
               {"id": "macos-x64", "os-type": "macos", "arch": "x64", "runner": "macos-13"},
-              {"id": "windows-x64", "os-type": "windows", "arch": "x64", "runner": "windows-latest"}
+              {"id": "windows-x64", "os-type": "windows", "arch": "x64", "runner": "windows-latest","mshell": "msys2 {0}"}
             ]
           }'
           
@@ -70,7 +70,7 @@ jobs:
 
     defaults:
       run:
-        shell: bash
+        shell: ${{ matrix.mshell || 'bash' }}
 
     steps:
       - name: Checkout Code
