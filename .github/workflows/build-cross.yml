@@ -49,15 +49,18 @@ jobs:
               {"id": "windows-x64", "os-type": "windows", "arch": "x64", "runner": "windows-latest","mshell": "msys2 {0}"}
             ]
           }'
-          
+
+          # 2. 根据输入逻辑进行处理，并务必使用 jq -c 压缩成单行
           if [[ "${{ inputs.platform }}" == "all" ]]; then
-            # 如果选 all，直接输出全部
-            echo "matrix=$ALL_PLATFORMS" >> $GITHUB_OUTPUT
+            # 选 all 时，压缩整个 JSON 
+            RESULT=$(echo "$ALL_PLATFORMS" | jq -c .)
           else
-            # 如果选了特定平台，利用 jq 过滤出匹配的那个 id
-            FILTERED=$(echo $ALL_PLATFORMS | jq -c '.include |= map(select(.id == "${{ inputs.platform }}"))')
-            echo "matrix=$FILTERED" >> $GITHUB_OUTPUT
+            # 选特定平台时，过滤并压缩
+            # 使用 --arg 安全传递变量
+            RESULT=$(echo "$ALL_PLATFORMS" | jq -c --arg ID "${{ inputs.platform }}" '.include |= map(select(.id == $ID))')
           fi
+          # 3. 输出到环境变量
+          echo "matrix=$RESULT" >> $GITHUB_OUTPUT          
 
   # --- 任务 2: 执行编译 ---
   build:
