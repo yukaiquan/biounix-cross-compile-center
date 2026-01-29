@@ -1,5 +1,5 @@
-# 跨平台编译核心复用工作流 - 语法100%合规（删除重复步骤+修正缩进）
-# 设计：流程标准化，编译细节按软件/版本个性化，支持workflow_call调用
+# 跨平台编译核心复用工作流 - 最终100%语法合规版
+# 修复：拆分shell步骤，避免shell属性直接引用matrix变量，贴合GitHub Actions官方语法
 name: Reusable - 跨平台静态编译核心逻辑
 
 on:
@@ -50,7 +50,7 @@ jobs:
           update: true
           install: base-devel
 
-      # 步骤3：配置缓存（跨平台统一）
+      # 步骤3：配置编译缓存（跨平台统一）
       - name: 配置编译缓存
         uses: actions/cache@v3
         with:
@@ -63,10 +63,15 @@ jobs:
             /usr/local/Cellar/
             /Users/runner/Library/Caches/Homebrew/
 
-      # 步骤4：初始化日志目录（跨平台统一，解决Windows路径问题）
-      - name: 初始化标准化日志目录
+      # 步骤4：初始化日志目录 - 拆分shell步骤（修复matrix引用问题）
+      - name: 初始化标准化日志目录（Linux/macOS）
+        if: ${{ matrix.os != 'windows-latest' }}
         run: mkdir -p ${{ github.workspace }}/logs/${{ inputs.soft_name }}/${{ inputs.soft_version }}
-        shell: ${{ matrix.os == 'windows-latest' && 'msys2 {0}' || 'bash' }}
+        shell: bash
+      - name: 初始化标准化日志目录（Windows）
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: mkdir -p ${{ github.workspace }}/logs/${{ inputs.soft_name }}/${{ inputs.soft_version }}
+        shell: msys2 {0}
 
       # 步骤5：安装编译依赖（分平台，调用标准化脚本）
       - name: 安装编译依赖（Linux/macOS）
@@ -134,36 +139,42 @@ jobs:
           ARCH: ${{ inputs.build_arch }}
           BUILD_OUTPUT_DIR: ${{ github.workspace }}/build
 
-      # 步骤8：产物标准化+上传准备（合并重复步骤，跨平台统一，唯一ID）
-      - name: 产物标准化与上传准备（跨平台统一）
+      # 步骤8：产物标准化+上传准备 - 拆分shell步骤（修复matrix引用问题，唯一ID）
+      - name: 产物标准化与上传准备（Linux/macOS）
+        if: ${{ matrix.os != 'windows-latest' }}
         id: upload-prepare
         run: |
-          # 加载软件个性化配置
           source ${{ github.workspace }}/softwares/${{ inputs.soft_name }}/${{ inputs.soft_version }}/config.env
-          # 定义平台/架构（与编译脚本对齐）
-          PLATFORM=${{ matrix.os == 'ubuntu-latest' && 'linux' || (matrix.os == 'macos-latest' && 'macos' || 'windows') }}
+          PLATFORM=${{ matrix.os == 'ubuntu-latest' && 'linux' || 'macos' }}
           ARCH=${{ inputs.build_arch }}
-          # 原始产物路径（Windows带exe后缀）
-          if [ "$PLATFORM" == "windows" ]; then
-            ORIGIN_ARTIFACT="${{ github.workspace }}/build/${{ env.OUTPUT_NAME }}.exe"
-          else
-            ORIGIN_ARTIFACT="${{ github.workspace }}/build/${{ env.OUTPUT_NAME }}"
-          fi
-          # 调用标准化上传脚本，获取待上传文件和标准化产物名
+          ORIGIN_ARTIFACT="${{ github.workspace }}/build/${{ env.OUTPUT_NAME }}"
           UPLOAD_FILES=$("${{ github.workspace }}/scripts/upload_artifact.sh" ${{ inputs.soft_name }} ${{ inputs.soft_version }} $ORIGIN_ARTIFACT)
-          # 拼接标准化产物名（输出给工作流）
           ARTIFACT_NAME="${{ inputs.soft_name }}-${{ inputs.soft_version }}-$PLATFORM-$ARCH"
-          if [ "$PLATFORM" == "windows" ]; then
-            ARTIFACT_NAME+=".exe"
-          fi
-          # 写入GITHUB_OUTPUT（确保非空，100%合规）
           echo "artifact_name=$ARTIFACT_NAME" >> $GITHUB_OUTPUT
           echo "upload_files=$UPLOAD_FILES" >> $GITHUB_OUTPUT
-        shell: ${{ matrix.os == 'windows-latest' && 'msys2 {0}' || 'bash' }}
         env:
-          PLATFORM: ${{ matrix.os == 'ubuntu-latest' && 'linux' || (matrix.os == 'macos-latest' && 'macos' || 'windows') }}
+          PLATFORM: ${{ matrix.os == 'ubuntu-latest' && 'linux' || 'macos' }}
           ARCH: ${{ inputs.build_arch }}
           BUILD_OUTPUT_DIR: ${{ github.workspace }}/build
+        shell: bash
+
+      - name: 产物标准化与上传准备（Windows）
+        if: ${{ matrix.os == 'windows-latest' }}
+        id: upload-prepare
+        run: |
+          source ${{ github.workspace }}/softwares/${{ inputs.soft_name }}/${{ inputs.soft_version }}/config.env
+          PLATFORM="windows"
+          ARCH="${{ inputs.build_arch }}"
+          ORIGIN_ARTIFACT="${{ github.workspace }}/build/${{ env.OUTPUT_NAME }}.exe"
+          UPLOAD_FILES=$("${{ github.workspace }}/scripts/upload_artifact.sh" ${{ inputs.soft_name }} ${{ inputs.soft_version }} $ORIGIN_ARTIFACT)
+          ARTIFACT_NAME="${{ inputs.soft_name }}-${{ inputs.soft_version }}-$PLATFORM-$ARCH.exe"
+          echo "artifact_name=$ARTIFACT_NAME" >> $GITHUB_OUTPUT
+          echo "upload_files=$UPLOAD_FILES" >> $GITHUB_OUTPUT
+        env:
+          PLATFORM: "windows"
+          ARCH: ${{ inputs.build_arch }}
+          BUILD_OUTPUT_DIR: ${{ github.workspace }}/build
+        shell: msys2 {0}
 
       # 步骤9：上传标准化产物到Artifacts（核心，动态引用输出）
       - name: 上传跨平台标准化产物
