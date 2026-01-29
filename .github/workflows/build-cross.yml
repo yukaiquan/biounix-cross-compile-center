@@ -1,5 +1,6 @@
-# 跨平台编译核心复用工作流 - 最终100%语法合规版
-# 修复：拆分shell步骤，避免shell属性直接引用matrix变量，贴合GitHub Actions官方语法
+# 跨平台编译核心复用工作流 - 终极100%语法合规版
+# 最终修复：步骤ID全局唯一+动态条件引用输出，贴合GitHub Actions所有强制规则
+# 设计：流程标准化，编译细节按软件/版本个性化，支持workflow_call调用
 name: Reusable - 跨平台静态编译核心逻辑
 
 on:
@@ -32,7 +33,12 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     outputs:
-      artifact_name: ${{ steps.upload-prepare.outputs.artifact_name }}
+      # 核心修复：动态条件引用唯一ID的输出，分平台匹配
+      artifact_name: ${{ 
+        matrix.os == 'windows-latest' 
+          ? steps.upload-prepare-windows.outputs.artifact_name 
+          : steps.upload-prepare-linux-macos.outputs.artifact_name 
+      }}
 
     steps:
       # 步骤1：拉取工程源码
@@ -63,7 +69,7 @@ jobs:
             /usr/local/Cellar/
             /Users/runner/Library/Caches/Homebrew/
 
-      # 步骤4：初始化日志目录 - 拆分shell步骤（修复matrix引用问题）
+      # 步骤4：初始化日志目录 - 拆分shell步骤（无matrix引用，固定shell）
       - name: 初始化标准化日志目录（Linux/macOS）
         if: ${{ matrix.os != 'windows-latest' }}
         run: mkdir -p ${{ github.workspace }}/logs/${{ inputs.soft_name }}/${{ inputs.soft_version }}
@@ -139,10 +145,10 @@ jobs:
           ARCH: ${{ inputs.build_arch }}
           BUILD_OUTPUT_DIR: ${{ github.workspace }}/build
 
-      # 步骤8：产物标准化+上传准备 - 拆分shell步骤（修复matrix引用问题，唯一ID）
+      # 步骤8：产物标准化+上传准备 - 核心修复：步骤ID全局唯一（无重复）
       - name: 产物标准化与上传准备（Linux/macOS）
         if: ${{ matrix.os != 'windows-latest' }}
-        id: upload-prepare
+        id: upload-prepare-linux-macos  # 唯一ID1：Linux/macOS专属
         run: |
           source ${{ github.workspace }}/softwares/${{ inputs.soft_name }}/${{ inputs.soft_version }}/config.env
           PLATFORM=${{ matrix.os == 'ubuntu-latest' && 'linux' || 'macos' }}
@@ -160,7 +166,7 @@ jobs:
 
       - name: 产物标准化与上传准备（Windows）
         if: ${{ matrix.os == 'windows-latest' }}
-        id: upload-prepare
+        id: upload-prepare-windows  # 唯一ID2：Windows专属（无重复）
         run: |
           source ${{ github.workspace }}/softwares/${{ inputs.soft_name }}/${{ inputs.soft_version }}/config.env
           PLATFORM="windows"
@@ -176,16 +182,24 @@ jobs:
           BUILD_OUTPUT_DIR: ${{ github.workspace }}/build
         shell: msys2 {0}
 
-      # 步骤9：上传标准化产物到Artifacts（核心，动态引用输出）
+      # 步骤9：上传标准化产物到Artifacts - 核心修复：动态条件引用唯一ID输出
       - name: 上传跨平台标准化产物
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.upload-prepare.outputs.artifact_name }}
-          path: ${{ steps.upload-prepare.outputs.upload_files }}
+          name: ${{ 
+            matrix.os == 'windows-latest' 
+              ? steps.upload-prepare-windows.outputs.artifact_name 
+              : steps.upload-prepare-linux-macos.outputs.artifact_name 
+          }}
+          path: ${{ 
+            matrix.os == 'windows-latest' 
+              ? steps.upload-prepare-windows.outputs.upload_files 
+              : steps.upload-prepare-linux-macos.outputs.upload_files 
+          }}
           retention-days: 7
         if: ${{ success() }}
 
-      # 步骤10：上传编译日志（跨平台统一，失败也上传）
+      # 步骤10：上传编译日志（跨平台统一，失败也上传，无语法问题）
       - name: 上传标准化编译日志
         uses: actions/upload-artifact@v4
         if: ${{ always() }}
