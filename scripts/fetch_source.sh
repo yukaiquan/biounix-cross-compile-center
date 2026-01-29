@@ -1,4 +1,5 @@
 #!/bin/bash
+echo "SRC_PATH=$PWD/build/PopLDdecay-3.43" > build_env.txt
 set -e
 SOFT_NAME=$1
 SOFT_VER=$2

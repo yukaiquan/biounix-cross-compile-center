@@ -12,7 +12,7 @@ on:
         required: true
         default: 'v3.43'
       platform:
-        description: '目标平台 (选择 all 则全部编译)'
+        description: '目标平台'
         required: true
         default: 'all'
         type: choice

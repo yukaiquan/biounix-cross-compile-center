@@ -1,31 +1,23 @@
 name: BioUnix Cross Build
 
 on:
-  # 支持从 Actions 页面手动点击运行
   workflow_dispatch:
     inputs:
       software:
-        description: '软件名称 (对应 softwares/ 下的目录名)'
+        description: '软件名称'
         required: true
         default: 'poplddecay'
       version:
-        description: '软件版本 (对应 softwares/软件名/ 下的版本目录)'
+        description: '软件版本'
         required: true
         default: 'v3.43'
       platform:
-        description: '目标平台与架构 (选择 all 则并行全部编译)'
+        description: '目标平台'
         required: true
         default: 'all'
         type: choice
-        options:
-          - all
-          - linux-x64
-          - linux-arm64
-          - macos-x64
-          - macos-arm64
-          - windows-x64
+        options: [all, linux-x64, linux-arm64, macos-x64, macos-arm64, windows-x64]
 
-  # 支持被 dispatch.yml 或其他 workflow 调用
   workflow_call:
     inputs:
       software:
@@ -39,45 +31,43 @@ on:
         type: string
 
 jobs:
+  # --- 任务 1: 动态计算矩阵 ---
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          # 定义所有可能的平台组合 (JSON 格式)
+          ALL_PLATFORMS='{
+            "include": [
+              {"id": "linux-x64", "os-type": "linux", "arch": "x64", "runner": "ubuntu-latest"},
+              {"id": "linux-arm64", "os-type": "linux", "arch": "arm64", "runner": "ubuntu-24.04-arm64"},
+              {"id": "macos-arm64", "os-type": "macos", "arch": "arm64", "runner": "macos-latest"},
+              {"id": "macos-x64", "os-type": "macos", "arch": "x64", "runner": "macos-13"},
+              {"id": "windows-x64", "os-type": "windows", "arch": "x64", "runner": "windows-latest"}
+            ]
+          }'
+          
+          if [[ "${{ inputs.platform }}" == "all" ]]; then
+            # 如果选 all，直接输出全部
+            echo "matrix=$ALL_PLATFORMS" >> $GITHUB_OUTPUT
+          else
+            # 如果选了特定平台，利用 jq 过滤出匹配的那个 id
+            FILTERED=$(echo $ALL_PLATFORMS | jq -c '.include |= map(select(.id == "${{ inputs.platform }}"))')
+            echo "matrix=$FILTERED" >> $GITHUB_OUTPUT
+          fi
+
+  # --- 任务 2: 执行编译 ---
   build:
+    needs: setup
     name: ${{ matrix.id }}
     runs-on: ${{ matrix.runner }}
-    # 核心判断：如果选了 all，或者选了当前的 id，则运行
-    if: |
-      inputs.platform == 'all' || 
-      inputs.platform == matrix.id
-    
     strategy:
-      fail-fast: false # 其中一个失败不影响其他平台
-      matrix:
-        include:
-          # --- Linux 编译节点 ---
-          - id: linux-x64
-            os-type: linux
-            arch: x64
-            runner: ubuntu-latest
-          - id: linux-arm64
-            os-type: linux
-            arch: arm64
-            runner: ubuntu-24.04-arm64 # 使用 GitHub 原生 ARM 运行器
+      fail-fast: false
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }} # 使用 setup 任务输出的矩阵
 
-          # --- macOS 编译节点 ---
-          - id: macos-arm64
-            os-type: macos
-            arch: arm64
-            runner: macos-latest # Apple Silicon (M1/M2)
-          - id: macos-x64
-            os-type: macos
-            arch: x64
-            runner: macos-13    # Intel Mac
-
-          # --- Windows 编译节点 ---
-          - id: windows-x64
-            os-type: windows
-            arch: x64
-            runner: windows-latest
-
-    # 强制所有步骤在 Bash 下运行，确保 Windows/Linux 脚本语法统一
     defaults:
       run:
         shell: bash
@@ -86,73 +76,36 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # Windows 特殊环境处理：安装 MSYS2 和必备工具链
       - name: Setup MSYS2 (Windows Only)
         if: matrix.os-type == 'windows'
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
           update: true
-          install: >-
-            base-devel
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-zlib
-            mingw-w64-x86_64-toolchain
+          install: base-devel mingw-w64-x86_64-gcc mingw-w64-x86_64-zlib
 
-      # 导出环境变量供后续步骤使用
       - name: Prepare Environment
         run: |
           echo "S_NAME=${{ inputs.software }}" >> $GITHUB_ENV
           echo "S_VER=${{ inputs.version }}" >> $GITHUB_ENV
-          echo "S_ID=${{ matrix.id }}" >> $GITHUB_ENV
-          
-          # 根据系统设置后缀
-          if [ "${{ matrix.os-type }}" == "windows" ]; then
-            echo "EXE_EXT=.exe" >> $GITHUB_ENV
-          else
-            echo "EXE_EXT=" >> $GITHUB_ENV
-          fi
+          [ "${{ matrix.os-type }}" == "windows" ] && echo "EXE_EXT=.exe" >> $GITHUB_ENV || echo "EXE_EXT=" >> $GITHUB_ENV
 
-      # 步骤 1: 安装依赖
       - name: Install Dependencies
-        run: |
-          bash scripts/install_deps.sh ${{ env.S_NAME }} ${{ env.S_VER }}
+        run: bash scripts/install_deps.sh ${{ env.S_NAME }} ${{ env.S_VER }}
 
-      # 步骤 2: 下载并解压源码
       - name: Fetch Source
         run: |
-          # 运行下载脚本，并捕获 SRC_PATH 到 GITHUB_ENV
           bash scripts/fetch_source.sh ${{ env.S_NAME }} ${{ env.S_VER }}
-          # 技巧：如果脚本在子进程中设置了环境变量，我们可以通过文件传递回当前 Shell
-          if [ -f "build_env.txt" ]; then
-            cat build_env.txt >> $GITHUB_ENV
-          fi
+          [ -f "build_env.txt" ] && cat build_env.txt >> $GITHUB_ENV || true
 
-      # 步骤 3: 运行软件特有的编译脚本
-      - name: Build Software
+      - name: Build
         run: |
           source config/global.env
-          # 执行 softwares/xxx/xxx/build.sh
           bash softwares/${{ env.S_NAME }}/${{ env.S_VER }}/build.sh
 
-      # 步骤 4: 收集编译产物
-      - name: Organize Artifacts
-        run: |
-          mkdir -p final_dist
-          # 拷贝编译出的 bin 到上传目录
-          if [ -d "dist/bin" ]; then
-            cp -r dist/bin/* final_dist/
-          fi
-          # 生成一个简单的构建描述文件
-          echo "Package: ${{ env.S_NAME }}" > final_dist/build.log
-          echo "Version: ${{ env.S_VER }}" >> final_dist/build.log
-          echo "Platform: ${{ matrix.id }}" >> final_dist/build.log
-
-      # 步骤 5: 上传到 GitHub Actions (Artifacts 区域)
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          # 产物名称格式: poplddecay-v3.43-linux-arm64
           name: ${{ env.S_NAME }}-${{ env.S_VER }}-${{ matrix.id }}
-          path: final_dist/
-          retention-days: 30
+          path: dist/bin/
+          retention-days: 7
