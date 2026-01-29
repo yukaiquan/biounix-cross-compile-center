@@ -34,7 +34,7 @@ on:
 jobs:
   global-cross-build:
     name: ${{ github.event.inputs.soft_name }}-${{ github.event.inputs.soft_version }}
-    uses: ./.github/workflows/reusable/build-cross.yml
+    uses: ./.github/workflows/build-cross.yml
     with:
       soft_name: ${{ github.event.inputs.soft_name }}
       soft_version: ${{ github.event.inputs.soft_version }}

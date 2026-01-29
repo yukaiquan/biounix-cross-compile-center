@@ -9,7 +9,7 @@ on:
     paths:
       - 'softwares/poplddecay/**'
       - 'scripts/**'
-      - '.github/workflows/reusable/build-cross.yml'
+      - '.github/workflows/build-cross.yml'
   # 手动触发：GitHub页面选择版本编译（推荐）
   workflow_dispatch:
     inputs:
