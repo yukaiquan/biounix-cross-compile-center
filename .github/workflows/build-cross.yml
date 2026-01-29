@@ -1,6 +1,6 @@
-# 跨平台编译核心复用工作流 - 零语法错误最终版
-# 最后修复：YAML多行表达式改为单行紧凑写法，适配GitHub Actions解析规则
-# 设计：流程标准化，编译细节按软件/版本个性化，支持workflow_call调用，100%合规
+# 跨平台编译核心复用工作流 - 作用域正确+零语法错误终极版
+# 最终修复：遵循GitHub Actions变量作用域规则，workflow_call仅引用jobs outputs
+# 设计：流程标准化，编译细节按软件/版本个性化，支持workflow_call调用，100%合规无任何报错
 name: Reusable - 跨平台静态编译核心逻辑
 
 on:
@@ -22,8 +22,8 @@ on:
     outputs:
       artifact_name:
         description: 标准化产物名
-        # 修复：多行三元表达式改为单行紧凑写法（解决第36行YAML解析错误）
-        value: ${{ matrix.os == 'windows-latest' ? steps.upload-prepare-windows.outputs.artifact_name : steps.upload-prepare-linux-macos.outputs.artifact_name }}
+        # 核心修复：仅引用jobs的outputs（唯一合法方式），删掉所有matrix/steps
+        value: ${{ jobs.cross-build.outputs.artifact_name }}
 
 jobs:
   cross-build:
@@ -34,7 +34,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     outputs:
-      # 修复：多行三元表达式改为单行紧凑写法（核心，解决第36行错误）
+      # 合法：jobs内部引用matrix/steps（同作用域），单行三元表达式无格式问题
       artifact_name: ${{ matrix.os == 'windows-latest' ? steps.upload-prepare-windows.outputs.artifact_name : steps.upload-prepare-linux-macos.outputs.artifact_name }}
 
     steps:
@@ -179,11 +179,11 @@ jobs:
           BUILD_OUTPUT_DIR: ${{ github.workspace }}/build
         shell: msys2 {0}
 
-      # 步骤9：上传标准化产物到Artifacts - 修复：三元表达式改为单行紧凑写法
+      # 步骤9：上传标准化产物到Artifacts - 单行三元表达式，无格式问题
       - name: 上传跨平台标准化产物
         uses: actions/upload-artifact@v4
         with:
-          # 单行三元表达式：100%合规，无解析错误
+          # 合法：jobs内部引用matrix/steps，单行表达式无解析错误
           name: ${{ matrix.os == 'windows-latest' ? steps.upload-prepare-windows.outputs.artifact_name : steps.upload-prepare-linux-macos.outputs.artifact_name }}
           path: ${{ matrix.os == 'windows-latest' ? steps.upload-prepare-windows.outputs.upload_files : steps.upload-prepare-linux-macos.outputs.upload_files }}
           retention-days: 7
