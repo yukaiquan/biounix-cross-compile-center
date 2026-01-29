@@ -58,7 +58,7 @@ case ${PLATFORM} in
     windows)
         # Windows-MSYS2/MINGW64：用pacman安装
         log_info "更新pacman并安装依赖"
-        pacman -Syu --noconfirm ${FINAL_DEPS} git || log_error "pacman安装依赖失败"
+        pacman -Syu --noconfirm ${FINAL_DEPS} git autoconf automake libtool || log_error "pacman安装依赖失败"
         ;;
     *)
         log_error "不支持的平台：${PLATFORM}"
