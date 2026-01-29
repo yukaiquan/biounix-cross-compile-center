@@ -117,3 +117,16 @@ get_artifact_name() {
     local ARCH=$4
     echo "${SOFT_NAME}-${SOFT_VERSION}-${PLATFORM}-${ARCH}"
 }
+log_info() {
+    echo -e "\033[32m[INFO]\033[0m $1"
+}
+
+log_warn() {
+    echo -e "\033[33m[WARN]\033[0m $1"
+}
+
+log_err() {
+    echo -e "\033[31m[ERROR]\033[0m $1"
+    exit 1
+}
+
