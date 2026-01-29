@@ -1,54 +1,59 @@
 name: BioUnix Cross Build
 
-# 支持手动触发，并输入软件名和版本
 on:
+  # 支持手动从 Actions 页面运行
   workflow_dispatch:
     inputs:
       software:
-        description: 'Software name in softwares/ directory'
+        description: 'Software name (folder name in softwares/)'
         required: true
         default: 'poplddecay'
       version:
-        description: 'Software version (e.g., v3.43)'
+        description: 'Software version (folder name in softwares/NAME/)'
         required: true
         default: 'v3.43'
+  
+  # 【关键】支持被 dispatch.yml 调用
+  workflow_call:
+    inputs:
+      software:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
 
 jobs:
   build:
     name: ${{ matrix.os-name }}-${{ matrix.arch }}
-    # 这里的 runner 决定了实际运行的物理机环境
     runs-on: ${{ matrix.runner }}
     
     strategy:
-      fail-fast: false # 即使其中一个平台失败，其他平台继续编译
+      fail-fast: false
       matrix:
         include:
-          # 1. Linux x86_64
+          # Linux x86_64
           - os-name: linux
             arch: x64
             runner: ubuntu-latest
-          
-          # 2. Linux ARM64 (GitHub 原生支持的 ARM 运行器)
+          # Linux ARM64
           - os-name: linux
             arch: arm64
             runner: ubuntu-24.04-arm64
-          
-          # 3. macOS ARM64 (Apple Silicon M1/M2)
+          # macOS Apple Silicon (M1/M2/M3)
           - os-name: macos
             arch: arm64
             runner: macos-latest
-          
-          # 4. macOS x64 (Intel)
+          # macOS Intel
           - os-name: macos
             arch: x64
             runner: macos-13
-          
-          # 5. Windows x64 (使用 MSYS2 模拟环境)
+          # Windows x64
           - os-name: windows
             arch: x64
             runner: windows-latest
 
-    # 强制所有步骤使用 bash (即使在 Windows 上)
+    # 强制所有步骤在所有平台上使用 bash (包括 Windows)
     defaults:
       run:
         shell: bash
@@ -57,72 +62,55 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # --- Windows 环境初始化 ---
+      # Windows 专用环境初始化
       - name: Setup MSYS2 (Windows Only)
         if: matrix.os-name == 'windows'
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
           update: true
-          # 预装 Windows 下编译 C++ 必备的工具链
           install: >-
             base-devel
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-zlib
-            mingw-w64-x86_64-toolchain
 
-      # --- 环境准备 ---
-      - name: Set Environment Variables
+      # 环境准备：统一输入变量名
+      - name: Set Environment
         run: |
-          # 导出软件信息给后续脚本使用
-          echo "SOFT_NAME=${{ github.event.inputs.software }}" >> $GITHUB_ENV
-          echo "SOFT_VER=${{ github.event.inputs.version }}" >> $GITHUB_ENV
-          
-          # 设置产物名称后缀
+          echo "S_NAME=${{ inputs.software }}" >> $GITHUB_ENV
+          echo "S_VER=${{ inputs.version }}" >> $GITHUB_ENV
           if [ "${{ matrix.os-name }}" == "windows" ]; then
-            echo "EXE_SUFFIX=.exe" >> $GITHUB_ENV
+            echo "EXE_EXT=.exe" >> $GITHUB_ENV
           else
-            echo "EXE_SUFFIX=" >> $GITHUB_ENV
+            echo "EXE_EXT=" >> $GITHUB_ENV
           fi
 
-      # --- 安装依赖 ---
+      # 执行项目 scripts/ 目录下的通用脚本
       - name: Install Dependencies
-        run: |
-          bash scripts/install_deps.sh ${{ env.SOFT_NAME }} ${{ env.SOFT_VER }}
+        run: bash scripts/install_deps.sh ${{ env.S_NAME }} ${{ env.S_VER }}
 
-      # --- 下载源码 ---
       - name: Fetch Source
         run: |
-          # 调用通用脚本下载源码，并捕获源码路径
-          bash scripts/fetch_source.sh ${{ env.SOFT_NAME }} ${{ env.SOFT_VER }}
-          # 将脚本生成的 SRC_PATH 导出给接下来的 Build 步骤
+          bash scripts/fetch_source.sh ${{ env.S_NAME }} ${{ env.S_VER }}
+          # 假设 fetch_source.sh 会导出 SRC_PATH 到 $GITHUB_ENV 或文件
           if [ -f "build_env.txt" ]; then source build_env.txt; fi
 
-      # --- 执行编译 ---
-      - name: Build Software
+      - name: Build
         run: |
-          # 加载全局路径配置
           source config/global.env
-          # 执行该软件特有的编译脚本
-          bash softwares/${{ env.SOFT_NAME }}/${{ env.SOFT_VER }}/build.sh
+          bash softwares/${{ env.S_NAME }}/${{ env.S_VER }}/build.sh
 
-      # --- 产物整理 ---
+      # 收集产物
       - name: Prepare Artifacts
         run: |
-          # 创建一个清晰的文件夹用于上传
-          mkdir -p final_package
-          # 如果软件生成了二进制文件，移动并重命名（带上系统名）
+          mkdir -p output_bin
           if [ -d "dist/bin" ]; then
-            cp -r dist/bin/* final_package/
+            cp -r dist/bin/* output_bin/
           fi
-          # 生成一个简单的平台标识文件
-          echo "Build on ${{ matrix.os-name }}-${{ matrix.arch }}" > final_package/build_info.txt
 
-      # --- 上传结果 ---
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          # 产物名称，如: poplddecay-v3.43-linux-x64
-          name: ${{ env.SOFT_NAME }}-${{ env.SOFT_VER }}-${{ matrix.os-name }}-${{ matrix.arch }}
-          path: final_package/
-          retention-days: 90
+          name: ${{ env.S_NAME }}-${{ env.S_VER }}-${{ matrix.os-name }}-${{ matrix.arch }}
+          path: output_bin/
+          retention-days: 7
