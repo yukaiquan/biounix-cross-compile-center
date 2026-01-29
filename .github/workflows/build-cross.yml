@@ -1,5 +1,5 @@
-# 跨平台编译核心复用工作流 - 最终最后一版（无任何报错）
-# 纯基础写法，ID唯一，Windows单独写死，100%合规
+# 跨平台编译核心复用工作流 - 语法100%合规（删除重复步骤+修正缩进）
+# 设计：流程标准化，编译细节按软件/版本个性化，支持workflow_call调用
 name: Reusable - 跨平台静态编译核心逻辑
 
 on:
@@ -32,8 +32,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     outputs:
-      # 动态引用唯一ID的输出，适配多平台
-      artifact_name: ${{ matrix.os == 'windows-latest' && steps.upload-prepare-windows.outputs.artifact_name || steps.upload-prepare-linux-macos.outputs.artifact_name }}
+      artifact_name: ${{ steps.upload-prepare.outputs.artifact_name }}
 
     steps:
       # 步骤1：拉取工程源码
@@ -42,7 +41,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      # 步骤2：Windows专属 - 配置MSYS2/MINGW64（删掉非法shell参数）
+      # 步骤2：Windows专属 - 配置MSYS2/MINGW64
       - name: Windows配置MSYS2/MINGW64
         if: ${{ matrix.os == 'windows-latest' }}
         uses: msys2/setup-msys2@v2
@@ -51,8 +50,8 @@ jobs:
           update: true
           install: base-devel
 
-      # 步骤3：配置缓存
-      - name: 配置缓存
+      # 步骤3：配置缓存（跨平台统一）
+      - name: 配置编译缓存
         uses: actions/cache@v3
         with:
           key: ${{ matrix.os }}-${{ inputs.build_arch }}-${{ inputs.soft_name }}-${{ inputs.soft_version }}
@@ -64,62 +63,44 @@ jobs:
             /usr/local/Cellar/
             /Users/runner/Library/Caches/Homebrew/
 
-      # 步骤4：初始化日志目录 - 分平台，ID唯一
-      - name: 初始化日志目录（Linux/macOS）
-        if: ${{ matrix.os != 'windows-latest' }}
+      # 步骤4：初始化日志目录（跨平台统一，解决Windows路径问题）
+      - name: 初始化标准化日志目录
         run: mkdir -p ${{ github.workspace }}/logs/${{ inputs.soft_name }}/${{ inputs.soft_version }}
-      - name: 初始化日志目录（Windows）
-        if: ${{ matrix.os == 'windows-latest' }}
-        run: |
-          cd $GITHUB_WORKSPACE
-          mkdir -p logs/${{ inputs.soft_name }}/${{ inputs.soft_version }}
-        shell: msys2 {0}
-      # 步骤5：安装编译依赖 - 分平台
+        shell: ${{ matrix.os == 'windows-latest' && 'msys2 {0}' || 'bash' }}
+
+      # 步骤5：安装编译依赖（分平台，调用标准化脚本）
       - name: 安装编译依赖（Linux/macOS）
         if: ${{ matrix.os != 'windows-latest' }}
         run: |
           chmod +x ${{ github.workspace }}/scripts/*.sh
           ${{ github.workspace }}/scripts/install_deps.sh ${{ inputs.soft_name }} ${{ inputs.soft_version }}
-      - name: 安装编译依赖（Windows）
+        shell: bash
+
+      - name: 安装编译依赖（Windows-MSYS2）
         if: ${{ matrix.os == 'windows-latest' }}
         run: |
-          # 核心：用MSYS2能识别的环境变量，无注释、带目录验证
-          echo "当前工作目录：$GITHUB_WORKSPACE"
-          ls -l $GITHUB_WORKSPACE
           cd $GITHUB_WORKSPACE
-          # 验证scripts文件夹是否存在
-          if [ -d "scripts" ]; then
-              echo "scripts文件夹存在，开始赋权"
-              chmod +x scripts/*.sh
-          else
-              echo "scripts文件夹不存在，列出当前所有目录"
-              ls -l
-              exit 1
-          fi
-          # 执行依赖安装脚本
+          chmod +x scripts/*.sh
           scripts/install_deps.sh ${{ inputs.soft_name }} ${{ inputs.soft_version }}
         shell: msys2 {0}
-      # 步骤6：拉取软件源码 - 分平台
+
+      # 步骤6：拉取软件源码（分平台，调用标准化脚本，设置SOURCE_DIR）
       - name: 拉取软件源码（Linux/macOS）
         if: ${{ matrix.os != 'windows-latest' }}
         run: |
           SOURCE_DIR=$(${{ github.workspace }}/scripts/fetch_source.sh ${{ inputs.soft_name }} ${{ inputs.soft_version }})
           echo "SOURCE_DIR=$SOURCE_DIR" >> $GITHUB_ENV
-      - name: 拉取软件源码（Windows）
+        shell: bash
+
+      - name: 拉取软件源码（Windows-MSYS2）
         if: ${{ matrix.os == 'windows-latest' }}
         run: |
           cd $GITHUB_WORKSPACE
-          # 验证scripts文件夹存在再执行
-          if [ -d "scripts" ]; then
-              SOURCE_DIR=$(scripts/fetch_source.sh ${{ inputs.soft_name }} ${{ inputs.soft_version }})
-              echo "SOURCE_DIR=$SOURCE_DIR" >> $GITHUB_ENV
-          else
-              echo "scripts文件夹不存在，列出当前目录"
-              ls -l
-              exit 1
-          fi
+          SOURCE_DIR=$(scripts/fetch_source.sh ${{ inputs.soft_name }} ${{ inputs.soft_version }})
+          echo "SOURCE_DIR=$SOURCE_DIR" >> $GITHUB_ENV
         shell: msys2 {0}
-      # 步骤7：执行专属编译脚本 - 分平台，env单独写死
+
+      # 步骤7：执行软件专属编译脚本（分平台，核心个性化入口）
       - name: 执行专属编译脚本（Linux/macOS）
         if: ${{ matrix.os != 'windows-latest' }}
         run: |
@@ -133,14 +114,13 @@ jobs:
           PLATFORM: ${{ matrix.os == 'ubuntu-latest' && 'linux' || 'macos' }}
           ARCH: ${{ inputs.build_arch }}
           BUILD_OUTPUT_DIR: ${{ github.workspace }}/build
-        # Windows 执行编译脚本步骤：全程类Unix路径，彻底抛弃D:\开头路径
-      - name: 执行编译脚本（Windows）
+        shell: bash
+
+      - name: 执行专属编译脚本（Windows-MSYS2）
         if: ${{ matrix.os == 'windows-latest' }}
         run: |
           cd $SOURCE_DIR
-          # 用GITHUB_WORKSPACE拼接类Unix路径source config.env
           source $GITHUB_WORKSPACE/softwares/${{ inputs.soft_name }}/${{ inputs.soft_version }}/config.env
-          # 用GITHUB_WORKSPACE拼接类Unix路径赋权+执行build.sh
           BUILD_SCRIPT=$GITHUB_WORKSPACE/softwares/${{ inputs.soft_name }}/${{ inputs.soft_version }}/build.sh
           chmod +x $BUILD_SCRIPT
           $BUILD_SCRIPT
@@ -151,61 +131,54 @@ jobs:
           SOFT_NAME: ${{ inputs.soft_name }}
           SOFT_VERSION: ${{ inputs.soft_version }}
           PLATFORM: windows
-          ARCH: ${{ inputs.build_arch }}  # 改为传参，不写死x64
-          # 标准化路径：基于GITHUB_WORKSPACE，MSYS2可识别
-          BUILD_OUTPUT_DIR: $GITHUB_WORKSPACE/build
-            # 步骤8：产物标准化与验证 - 核心修复：ID唯一！！！
-      - name: 产物标准化与验证（Linux/macOS）
-        if: ${{ matrix.os != 'windows-latest' }}
-        id: upload-prepare-linux-macos  # 唯一ID1
-      - name: 产物标准化与验证（Linux/macOS）
-        if: ${{ matrix.os != 'windows-latest' }}
-        id: upload-prepare-linux-macos
-        run: |
-          source ${{ github.workspace }}/softwares/${{ inputs.soft_name }}/${{ inputs.soft_version }}/config.env
-          # 按系统定义PLATFORM，与个性化配置对齐
-          PLATFORM=${{ matrix.os == 'ubuntu-latest' && 'linux' || 'macos' }}
-          echo "PLATFORM=$PLATFORM" >> $GITHUB_ENV
-          # 产物路径：Linux/macOS无exe后缀
-          ORIGIN_ARTIFACT="${{ github.workspace }}/build/${{ env.OUTPUT_NAME }}"
-          UPLOAD_FILES=$(${{ github.workspace }}/scripts/upload_artifact.sh ${{ inputs.soft_name }} ${{ inputs.soft_version }} $ORIGIN_ARTIFACT)
-          echo "artifact_name=${{ env.ARTIFACT_NAME }}" >> $GITHUB_OUTPUT
-          echo "upload_files=$UPLOAD_FILES" >> $GITHUB_OUTPUT
-        env:
           ARCH: ${{ inputs.build_arch }}
-      - name: 产物标准化与验证（Windows）
-        if: ${{ matrix.os == 'windows-latest' }}
-        id: upload-prepare-windows  # 唯一ID2（不再重复）
-        run: |
-          source ${{ github.workspace }}/softwares/${{ inputs.soft_name }}/${{ inputs.soft_version }}/config.env
-          ORIGIN_ARTIFACT="${{ github.workspace }}/build/${{ env.OUTPUT_NAME }}.exe"
-          UPLOAD_FILES=$(${{ github.workspace }}/scripts/upload_artifact.sh ${{ inputs.soft_name }} ${{ inputs.soft_version }} $ORIGIN_ARTIFACT)
-          echo "artifact_name=${{ env.ARTIFACT_NAME }}" >> $GITHUB_OUTPUT
-          echo "upload_files=$UPLOAD_FILES" >> $GITHUB_OUTPUT
-        shell: msys2 {0}
+          BUILD_OUTPUT_DIR: ${{ github.workspace }}/build
 
-      # 步骤9：上传产物到Artifacts - 核心修复：动态引用唯一ID的输出
-      - name: 标准化产物并输出上传信息
+      # 步骤8：产物标准化+上传准备（合并重复步骤，跨平台统一，唯一ID）
+      - name: 产物标准化与上传准备（跨平台统一）
+        id: upload-prepare
         run: |
+          # 加载软件个性化配置
           source ${{ github.workspace }}/softwares/${{ inputs.soft_name }}/${{ inputs.soft_version }}/config.env
-          ORIGIN_ARTIFACT="${{ github.workspace }}/build/"
-          # 调用上传脚本获取待上传文件路径
+          # 定义平台/架构（与编译脚本对齐）
+          PLATFORM=${{ matrix.os == 'ubuntu-latest' && 'linux' || (matrix.os == 'macos-latest' && 'macos' || 'windows') }}
+          ARCH=${{ inputs.build_arch }}
+          # 原始产物路径（Windows带exe后缀）
+          if [ "$PLATFORM" == "windows" ]; then
+            ORIGIN_ARTIFACT="${{ github.workspace }}/build/${{ env.OUTPUT_NAME }}.exe"
+          else
+            ORIGIN_ARTIFACT="${{ github.workspace }}/build/${{ env.OUTPUT_NAME }}"
+          fi
+          # 调用标准化上传脚本，获取待上传文件和标准化产物名
           UPLOAD_FILES=$("${{ github.workspace }}/scripts/upload_artifact.sh" ${{ inputs.soft_name }} ${{ inputs.soft_version }} $ORIGIN_ARTIFACT)
-          # 核心：拼接标准化artifact_name（和产物文件名一致，非空）
-          ARTIFACT_NAME="${{ inputs.soft_name }}-${{ inputs.soft_version }}-${{ env.PLATFORM }}-${{ env.ARCH }}"
-          # 写入GITHUB_OUTPUT，两个参数都有值
-          echo "artifact_name=${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
-          echo "upload_files=${UPLOAD_FILES}" >> $GITHUB_OUTPUT
-        shell: bash
+          # 拼接标准化产物名（输出给工作流）
+          ARTIFACT_NAME="${{ inputs.soft_name }}-${{ inputs.soft_version }}-$PLATFORM-$ARCH"
+          if [ "$PLATFORM" == "windows" ]; then
+            ARTIFACT_NAME+=".exe"
+          fi
+          # 写入GITHUB_OUTPUT（确保非空，100%合规）
+          echo "artifact_name=$ARTIFACT_NAME" >> $GITHUB_OUTPUT
+          echo "upload_files=$UPLOAD_FILES" >> $GITHUB_OUTPUT
+        shell: ${{ matrix.os == 'windows-latest' && 'msys2 {0}' || 'bash' }}
         env:
-          SOURCE_DIR: ${{ env.SOURCE_DIR }}
-          PLATFORM: ${{ env.PLATFORM }}
-          ARCH: ${{ env.ARCH }}
-      # 步骤10：上传编译日志 - 无坑，保留
-      - name: 上传编译日志
+          PLATFORM: ${{ matrix.os == 'ubuntu-latest' && 'linux' || (matrix.os == 'macos-latest' && 'macos' || 'windows') }}
+          ARCH: ${{ inputs.build_arch }}
+          BUILD_OUTPUT_DIR: ${{ github.workspace }}/build
+
+      # 步骤9：上传标准化产物到Artifacts（核心，动态引用输出）
+      - name: 上传跨平台标准化产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.upload-prepare.outputs.artifact_name }}
+          path: ${{ steps.upload-prepare.outputs.upload_files }}
+          retention-days: 7
+        if: ${{ success() }}
+
+      # 步骤10：上传编译日志（跨平台统一，失败也上传）
+      - name: 上传标准化编译日志
         uses: actions/upload-artifact@v4
         if: ${{ always() }}
         with:
-          name: ${{ inputs.soft_name }}-${{ inputs.soft_version }}-${{ matrix.os }}-logs
+          name: ${{ inputs.soft_name }}-${{ inputs.soft_version }}-${{ matrix.os }}-build-logs
           path: ${{ github.workspace }}/logs/${{ inputs.soft_name }}/${{ inputs.soft_version }}/
           retention-days: 7
