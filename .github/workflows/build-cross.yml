@@ -108,10 +108,17 @@ jobs:
       - name: 拉取软件源码（Windows）
         if: ${{ matrix.os == 'windows-latest' }}
         run: |
-          SOURCE_DIR=$(${{ github.workspace }}/scripts/fetch_source.sh ${{ inputs.soft_name }} ${{ inputs.soft_version }})
-          echo "SOURCE_DIR=$SOURCE_DIR" >> $GITHUB_ENV
+          cd $GITHUB_WORKSPACE
+          # 验证scripts文件夹存在再执行
+          if [ -d "scripts" ]; then
+              SOURCE_DIR=$(scripts/fetch_source.sh ${{ inputs.soft_name }} ${{ inputs.soft_version }})
+              echo "SOURCE_DIR=$SOURCE_DIR" >> $GITHUB_ENV
+          else
+              echo "scripts文件夹不存在，列出当前目录"
+              ls -l
+              exit 1
+          fi
         shell: msys2 {0}
-
       # 步骤7：执行专属编译脚本 - 分平台，env单独写死
       - name: 执行专属编译脚本（Linux/macOS）
         if: ${{ matrix.os != 'windows-latest' }}
