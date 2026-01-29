@@ -187,7 +187,7 @@ jobs:
           # 写入GITHUB_OUTPUT，两个参数都有值
           echo "artifact_name=${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
           echo "upload_files=${UPLOAD_FILES}" >> $GITHUB_OUTPUT
-        shell: ${{ matrix.shell }}
+        shell: bash
         env:
           SOURCE_DIR: ${{ env.SOURCE_DIR }}
           PLATFORM: ${{ env.PLATFORM }}
