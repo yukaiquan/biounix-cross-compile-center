@@ -1,21 +1,46 @@
 #!/bin/bash
 # 通用工具函数 - 跨平台兼容（Linux/macOS/Windows-MSYS2）
-# 补全：check_param/get_arch/normalize_path + get_platform别名（兼容upload_artifact.sh）
+# 最终修复：日志同时输出到stderr和logs文件（解决日志上传无文件警告）
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:$PATH
 
-# 日志函数：带时间戳的彩色日志（输出到stderr）
+# 初始化日志文件路径（基于环境变量，和标准化目录一致）
+if [ -n "${SOFT_NAME}" ] && [ -n "${SOFT_VERSION}" ] && [ -n "${PLATFORM}" ]; then
+    LOG_DIR="${PWD}/logs/${SOFT_NAME}/${SOFT_VERSION}"
+    LOG_FILE="${LOG_DIR}/${PLATFORM}-build.log"
+    # 确保日志目录存在
+    mkdir -p ${LOG_DIR} || true
+    # 初始化日志文件（清空旧日志）
+    > ${LOG_FILE} || true
+else
+    # 未传环境变量时，日志只输出到stderr
+    LOG_FILE=""
+fi
+
+# 日志函数：同时输出到stderr（控制台）和logs文件（解决上传警告）
 log_info() {
     local TIME=$(date +"%Y-%m-%d %H:%M:%S")
-    echo -e "[INFO]  ${TIME} $1" >&2
+    local LOG_CONTENT="[INFO]  ${TIME} $1"
+    # 输出到stderr
+    echo -e ${LOG_CONTENT} >&2
+    # 写入日志文件（如果路径有效）
+    if [ -n "${LOG_FILE}" ]; then
+        echo -e ${LOG_CONTENT} >> ${LOG_FILE}
+    fi
 }
 
 log_error() {
     local TIME=$(date +"%Y-%m-%d %H:%M:%S")
-    echo -e "\033[31m[ERROR]  ${TIME} $1\033[0m" >&2
+    local LOG_CONTENT="[ERROR]  ${TIME} $1"
+    # 输出到stderr（红色）
+    echo -e "\033[31m${LOG_CONTENT}\033[0m" >&2
+    # 写入日志文件（如果路径有效）
+    if [ -n "${LOG_FILE}" ]; then
+        echo -e ${LOG_CONTENT} >> ${LOG_FILE}
+    fi
     exit 1
 }
 
-# 新增：检查入参是否为空（upload_artifact.sh调用）
+# 检查入参是否为空
 check_param() {
     local PARAM_NAME=$1
     local PARAM_VALUE=$2
@@ -24,7 +49,7 @@ check_param() {
     fi
 }
 
-# 跨平台兼容的realpath（解决realpath命令缺失）
+# 跨平台兼容的realpath
 realpath_compat() {
     if [ -x "$(command -v realpath)" ]; then
         realpath "$1"
@@ -33,12 +58,12 @@ realpath_compat() {
     fi
 }
 
-# 新增：路径标准化（别名，兼容upload_artifact.sh的normalize_path）
+# 路径标准化（别名）
 normalize_path() {
     realpath_compat "$1"
 }
 
-# 检测操作系统（返回linux/macos/windows）
+# 检测操作系统
 detect_os() {
     local OS=$(uname -s | tr '[:upper:]' '[:lower:]')
     if [[ $OS == *"linux"* ]]; then
@@ -52,12 +77,12 @@ detect_os() {
     fi
 }
 
-# 新增：get_platform别名（兼容upload_artifact.sh的函数名调用）
+# get_platform别名
 get_platform() {
     detect_os
 }
 
-# 新增：获取系统架构（返回x64/arm64，upload_artifact.sh调用）
+# 获取系统架构
 get_arch() {
     local ARCH=$(uname -m | tr '[:upper:]' '[:lower:]')
     if [[ $ARCH == "x86_64" || $ARCH == "amd64" ]]; then
@@ -69,7 +94,7 @@ get_arch() {
     fi
 }
 
-# 检查目录是否存在，不存在则创建
+# 检查目录是否存在
 check_dir() {
     if [ ! -d "$1" ]; then
         log_info "创建目录：$1"
@@ -84,7 +109,7 @@ check_cmd() {
     fi
 }
 
-# 标准化产物名：软件-版本-平台-架构
+# 标准化产物名
 get_artifact_name() {
     local SOFT_NAME=$1
     local SOFT_VERSION=$2

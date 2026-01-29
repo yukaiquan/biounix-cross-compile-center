@@ -133,21 +133,27 @@ jobs:
           PLATFORM: ${{ matrix.os == 'ubuntu-latest' && 'linux' || 'macos' }}
           ARCH: ${{ inputs.build_arch }}
           BUILD_OUTPUT_DIR: ${{ github.workspace }}/build
-      - name: 执行专属编译脚本（Windows）
+        # Windows 执行编译脚本步骤：全程类Unix路径，彻底抛弃D:\开头路径
+      - name: 执行编译脚本（Windows）
         if: ${{ matrix.os == 'windows-latest' }}
         run: |
-          source ${{ github.workspace }}/softwares/${{ inputs.soft_name }}/${{ inputs.soft_version }}/config.env
-          cd ${{ env.SOURCE_DIR }}
-          chmod +x ${{ github.workspace }}/softwares/${{ inputs.soft_name }}/${{ inputs.soft_version }}/build.sh
-          ${{ github.workspace }}/softwares/${{ inputs.soft_name }}/${{ inputs.soft_version }}/build.sh
+          cd $SOURCE_DIR
+          # 用GITHUB_WORKSPACE拼接类Unix路径source config.env
+          source $GITHUB_WORKSPACE/softwares/${{ inputs.soft_name }}/${{ inputs.soft_version }}/config.env
+          # 用GITHUB_WORKSPACE拼接类Unix路径赋权+执行build.sh
+          BUILD_SCRIPT=$GITHUB_WORKSPACE/softwares/${{ inputs.soft_name }}/${{ inputs.soft_version }}/build.sh
+          chmod +x $BUILD_SCRIPT
+          $BUILD_SCRIPT
         shell: msys2 {0}
         env:
+          MSYSTEM: MINGW64
+          SOURCE_DIR: ${{ env.SOURCE_DIR }}
           SOFT_NAME: ${{ inputs.soft_name }}
           SOFT_VERSION: ${{ inputs.soft_version }}
           PLATFORM: windows
-          ARCH: ${{ inputs.build_arch }}
-          BUILD_OUTPUT_DIR: ${{ github.workspace }}/build
-
+          ARCH: x64
+          # 核心修正：BUILD_OUTPUT_DIR改为类Unix路径（MSYS2可识别）
+          BUILD_OUTPUT_DIR: /d/a/biounix-cross-compile-center/biounix-cross-compile-center/build
       # 步骤8：产物标准化与验证 - 核心修复：ID唯一！！！
       - name: 产物标准化与验证（Linux/macOS）
         if: ${{ matrix.os != 'windows-latest' }}
@@ -170,16 +176,22 @@ jobs:
         shell: msys2 {0}
 
       # 步骤9：上传产物到Artifacts - 核心修复：动态引用唯一ID的输出
-      - name: 上传产物到Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          # 根据系统选择对应ID的产物名
-          name: ${{ matrix.os == 'windows-latest' && steps.upload-prepare-windows.outputs.artifact_name || steps.upload-prepare-linux-macos.outputs.artifact_name }}
-          # 根据系统选择对应ID的文件路径
-          path: ${{ matrix.os == 'windows-latest' && steps.upload-prepare-windows.outputs.upload_files || steps.upload-prepare-linux-macos.outputs.upload_files }}
-          retention-days: 30
-          if-no-files-found: error
-
+      - name: 标准化产物并输出上传信息
+        run: |
+          source ${{ github.workspace }}/softwares/${{ inputs.soft_name }}/${{ inputs.soft_version }}/config.env
+          ORIGIN_ARTIFACT="${{ github.workspace }}/build/"
+          # 调用上传脚本获取待上传文件路径
+          UPLOAD_FILES=$("${{ github.workspace }}/scripts/upload_artifact.sh" ${{ inputs.soft_name }} ${{ inputs.soft_version }} $ORIGIN_ARTIFACT)
+          # 核心：拼接标准化artifact_name（和产物文件名一致，非空）
+          ARTIFACT_NAME="${{ inputs.soft_name }}-${{ inputs.soft_version }}-${{ env.PLATFORM }}-${{ env.ARCH }}"
+          # 写入GITHUB_OUTPUT，两个参数都有值
+          echo "artifact_name=${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
+          echo "upload_files=${UPLOAD_FILES}" >> $GITHUB_OUTPUT
+        shell: ${{ matrix.shell }}
+        env:
+          SOURCE_DIR: ${{ env.SOURCE_DIR }}
+          PLATFORM: ${{ env.PLATFORM }}
+          ARCH: ${{ env.ARCH }}
       # 步骤10：上传编译日志 - 无坑，保留
       - name: 上传编译日志
         uses: actions/upload-artifact@v4
