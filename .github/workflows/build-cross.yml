@@ -82,8 +82,9 @@ jobs:
       - name: 安装编译依赖（Windows）
         if: ${{ matrix.os == 'windows-latest' }}
         run: |
-          chmod +x ${{ github.workspace }}/scripts/*.sh
-          ${{ github.workspace }}/scripts/install_deps.sh ${{ inputs.soft_name }} ${{ inputs.soft_version }}
+          cd ${{ github.workspace }}  # 核心：先切到工作目录，用相对路径
+          chmod +x scripts/*.sh
+          scripts/install_deps.sh ${{ inputs.soft_name }} ${{ inputs.soft_version }}
         shell: msys2 {0}
 
       # 步骤6：拉取软件源码 - 分平台
