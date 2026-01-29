@@ -47,8 +47,9 @@ jobs:
             platform: macos
             shell: bash
     runs-on: ${{ matrix.os }}
+    # 定义Job输出（供Workflow输出）
     outputs:
-      artifact_name: ${{ steps.upload.outputs.artifact_name }}
+      artifact_name: ${{ steps.upload-prepare.outputs.artifact_name }}
     steps:
       # 步骤1：拉取编译工程仓库源码（本仓库，含脚本/配置/软件配置）
       - name: 拉取编译工程源码
@@ -93,9 +94,6 @@ jobs:
           chmod +x ${{ github.workspace }}/scripts/*.sh
           ${{ github.workspace }}/scripts/install_deps.sh ${{ inputs.soft_name }} ${{ inputs.soft_version }}
         shell: ${{ matrix.shell }}
-        env:
-          # 日志文件
-          LOG_FILE: ${{ github.workspace }}/logs/${{ inputs.soft_name }}/${{ inputs.soft_version }}/install_deps_${{ matrix.platform }}.log
 
       # 步骤6：拉取软件源码（调用通用脚本fetch_source.sh，输出源码目录）
       - name: 拉取软件源码
@@ -103,10 +101,8 @@ jobs:
         run: |
           SOURCE_DIR=$(${{ github.workspace }}/scripts/fetch_source.sh ${{ inputs.soft_name }} ${{ inputs.soft_version }})
           echo "SOURCE_DIR=$SOURCE_DIR" >> $GITHUB_ENV
-          echo "::set-output name=source_dir::$SOURCE_DIR"
+          echo "artifact_name=placeholder" >> $GITHUB_OUTPUT
         shell: ${{ matrix.shell }}
-        env:
-          LOG_FILE: ${{ github.workspace }}/logs/${{ inputs.soft_name }}/${{ inputs.soft_version }}/fetch_source_${{ matrix.platform }}.log
 
       # 步骤7：执行软件专属编译脚本（build.sh）- 核心编译步骤
       - name: 执行专属编译脚本
@@ -128,15 +124,12 @@ jobs:
           BUILD_OUTPUT_DIR: ${{ github.workspace }}/build
           # 从软件配置读取的变量（提前加载，供build.sh使用）
           $(cat ${{ github.workspace }}/softwares/${{ inputs.soft_name }}/${{ inputs.soft_version }}/config.env | grep -v '^#')
-          # 日志文件
-          LOG_FILE: ${{ github.workspace }}/logs/${{ inputs.soft_name }}/${{ inputs.soft_version }}/build_${{ matrix.platform }}.log
 
       # 步骤8：产物标准化+验证+准备上传（调用通用脚本upload_artifact.sh）
       - name: 产物标准化与验证
         id: upload-prepare
         run: |
           # 编译脚本默认输出产物到BUILD_OUTPUT_DIR/原始名，需指定原始产物路径
-          # 若build.sh修改了输出路径，需同步修改此处（示例为PopLDdecay的原始产物名）
           ORIGIN_ARTIFACT="${{ github.workspace }}/build/${{ env.OUTPUT_NAME }}"
           # Windows添加.exe后缀
           if [[ ${{ matrix.platform }} == "windows" ]]; then
@@ -144,12 +137,12 @@ jobs:
           fi
           # 调用上传准备脚本，输出待上传文件
           UPLOAD_FILES=$(${{ github.workspace }}/scripts/upload_artifact.sh ${{ inputs.soft_name }} ${{ inputs.soft_version }} $ORIGIN_ARTIFACT)
-          echo "::set-output name=upload_files::$UPLOAD_FILES"
-          echo "::set-output name=artifact_name::${{ env.ARTIFACT_NAME }}"
+          # 输出产物名和待上传文件（供后续步骤使用）
+          echo "artifact_name=${{ env.ARTIFACT_NAME }}" >> $GITHUB_OUTPUT
+          echo "upload_files=$UPLOAD_FILES" >> $GITHUB_OUTPUT
         shell: ${{ matrix.shell }}
         env:
           GITHUB_ENV: ${{ github.env }}
-          LOG_FILE: ${{ github.workspace }}/logs/${{ inputs.soft_name }}/${{ inputs.soft_version }}/verify_${{ matrix.platform }}.log
 
       # 步骤9：上传产物到GitHub Artifacts
       - name: 上传产物到Artifacts
@@ -158,7 +151,7 @@ jobs:
         with:
           name: ${{ steps.upload-prepare.outputs.artifact_name }}
           path: ${{ steps.upload-prepare.outputs.upload_files }}
-          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}  # 从artifact.env读取
+          retention-days: 30  # 产物保留30天（与config/artifact.env一致）
           if-no-files-found: error  # 无文件则失败
 
       # 步骤10：上传编译日志（方便排查问题）
