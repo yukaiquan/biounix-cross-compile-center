@@ -13,20 +13,29 @@ fi
 cd "${SRC_PATH}"
 log_info "Building bedtools2 in: $(pwd)"
 
-# 3. 准备基础变量
+# 3. 针对 Windows 的源码“手术”
+if [ "$OS_TYPE" == "windows" ]; then
+    log_info "Patching source for Windows compatibility (Disabling regressTest)..."
+    # 从 Makefile 中移除 regressTest 编译目录
+    sed -i 's|$(SRC_DIR)/regressTest||g' Makefile
+    # 从主程序入口中注释掉 regressTest 调用
+    if [ -f "src/bedtools.cpp" ]; then
+        sed -i '/regressTest_main/d' src/bedtools.cpp
+        sed -i '/subcommand == "regressTest"/d' src/bedtools.cpp
+    fi
+fi
+
+# 4. 准备编译参数
 export CXX="g++"
 MAKE_TARGET="all"
 
-# 4. 平台与架构适配
 case "${OS_TYPE}" in
     "windows")
-        log_info "Applying Windows POSIX-Compatibility & Type Shims..."
-        # 猛药 1：-D__int64_t=int64_t 解决 LargeFileSupport.h 的报错
-        # 猛药 2：-include stdio.h 解决 asprintf 报错
-        # 猛药 3：-D_GNU_SOURCE 开启 MinGW 扩展功能
+        log_info "Applying Windows POSIX-Compatibility shims..."
+        # 注入所有必需的定义，解决 int64 和 asprintf 问题
         export CXXFLAGS="-O3 -std=c++11 -D_GNU_SOURCE -D__USE_MINGW_ANSI_STDIO -D__int64_t=int64_t -include cstdint -include stdio.h -D_FILE_OFFSET_BITS=64"
         export LDFLAGS="-static -static-libgcc -static-libstdc++"
-        # 链接时加入 -lmman 解决 fastaFromBed 的内存映射报错
+        # 链接 mman 和 Winsock
         export BT_LIBS="-lz -lbz2 -llzma -lpthread -lws2_32 -lmman"
         ;;
 
@@ -39,7 +48,7 @@ case "${OS_TYPE}" in
         ;;
 
     "linux")
-        log_info "Optimization for Linux..."
+        log_info "Optimization for Linux (Semi-Static)..."
         export CXXFLAGS="-O3 -std=c++11 -D_FILE_OFFSET_BITS=64"
         export LDFLAGS="-static-libgcc -static-libstdc++"
         export BT_LIBS="-lz -lbz2 -llzma -lpthread"
@@ -64,8 +73,8 @@ echo "#endif" >> src/utils/version/version_git.h
 log_info "Cleaning..."
 make clean || true
 
-log_info "Running: make -j${MAKE_JOBS}"
-# 强制传递变量，特别是 BT_LIBS，否则 Windows 链接阶段会挂
+log_info "Running: make -j${MAKE_JOBS} ..."
+# 传递 CXXFLAGS 以确保我们的宏生效
 make -j${MAKE_JOBS} ${MAKE_TARGET} \
     CXX="$CXX" \
     CXXFLAGS="$CXXFLAGS" \
@@ -77,13 +86,13 @@ mkdir -p "${INSTALL_PREFIX}/bin"
 
 if [ -f "bin/bedtools" ]; then
     cp -f bin/bedtools "${INSTALL_PREFIX}/bin/bedtools${EXE_EXT}"
-    log_info "Success: bedtools binary copied."
+    log_info "Success: bedtools binary produced."
 else
     log_err "Build failed: bin/bedtools not found."
     exit 1
 fi
 
-# 拷贝 bin 下的其他工具（intersectBed 等其实是 bedtools 的软链或脚本）
+# 拷贝 bin 下的所有链接（Windows 下会变实际文件）和脚本
 cp -r bin/* "${INSTALL_PREFIX}/bin/" 2>/dev/null || true
 
 # 8. 验证
