@@ -20,15 +20,15 @@ if [ ! -f "CMakeLists.txt" ]; then
 fi
 log_info "Final build root: $(pwd)"
 
-# --- 4. 源码深度手术 (针对 Windows/GCC15 的终极补丁) ---
+# --- 4. 源码深度补丁 (针对 Windows/GCC15 的终极手术) ---
 if [ "$OS_TYPE" == "windows" ]; then
-    log_info "Applying high-level compatibility patches for Windows..."
+    log_info "Applying deep compatibility patches for Windows..."
 
-    # 修复 A: 解决 asprintf 在 Windows 缺失的问题
-    # 直接在 src/common.h 中注入 asprintf 的实现，这是解决该报错最彻底的方法
+    # 修复 A: 注入 asprintf 模拟实现
     if [ -f "src/common.h" ]; then
         log_info "Injecting asprintf shim into src/common.h..."
-        cat >> src/common.h <<EOF
+        # 使用 cat <<'EOF' (带单引号) 防止 shell 扩展变量内容
+        cat >> src/common.h <<'EOF'
 
 /* RAXML-NG WINDOWS COMPATIBILITY SHIM */
 #ifdef _WIN32
@@ -52,28 +52,25 @@ static inline int asprintf(char **strp, const char *fmt, ...) {
 EOF
     fi
 
-    # 修复 B: 解决 pll_utree_parse 和 pll_rtree_parse 的函数原型冲突
-    find libs -name "parse_utree.y" -exec sed -i 's/extern int pll_utree_parse();/struct pll_unode_s; int pll_utree_parse(struct pll_unode_s * tree);/g' {} +
-    find libs -name "parse_rtree.y" -exec sed -i 's/extern int pll_rtree_parse();/struct pll_rnode_s; int pll_rtree_parse(struct pll_rnode_s * tree);/g' {} +
+    # 修复 B: 在 CMakeLists.txt 顶层强制注入编译器标志 (避开命令行引号坑)
+    log_info "Injecting compiler flags into CMakeLists.txt..."
+    sed -i '2i set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive -Wno-error=int-conversion -Wno-error=stringop-truncation -Wno-error=format-truncation")' CMakeLists.txt
+    sed -i '2i set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-int-conversion -Wno-error=int-conversion -Wno-error=stringop-truncation")' CMakeLists.txt
+    
+    # 修复 C: 提升所有子模块的 CMake 策略要求
+    find . -name "CMakeLists.txt" -exec sed -i 's/cmake_minimum_required *(VERSION *[23]\.[0-9]/cmake_minimum_required(VERSION 3.10/g' {} +
 
-    # 修复 C: 解决子模块中的 errno 变量名冲突
+    # 修复 D: 解决子模块中的 errno 变量名冲突 (递归替换 libs 目录下所有相关文件)
     find libs -type f \( -name "*.h" -o -name "*.c" -o -name "*.cpp" -o -name "*.l" -o -name "*.y" \) \
         -exec sed -i 's/\berrno\b/pll_errno/g' {} +
 
-    # 修复 D: 强制提升所有 CMakeLists.txt 的版本要求
-    find . -name "CMakeLists.txt" -exec sed -i 's/cmake_minimum_required *(VERSION *[23]\.[0-9]/cmake_minimum_required(VERSION 3.10/g' {} +
-
-    # 修复 E: 屏蔽编译警告
-    MY_EXTRA_FLAGS="-fpermissive -Wno-error=int-conversion -Wno-error=stringop-truncation -Wno-error=format-truncation"
+    # 修复 E: 修复 Bison 函数原型声明冲突
+    find libs -name "parse_utree.y" -exec sed -i 's/extern int pll_utree_parse();/struct pll_unode_s; int pll_utree_parse(struct pll_unode_s * tree);/g' {} +
+    find libs -name "parse_rtree.y" -exec sed -i 's/extern int pll_rtree_parse();/struct pll_rnode_s; int pll_rtree_parse(struct pll_rnode_s * tree);/g' {} +
 fi
 
-# 5. 初始化 CMake 参数
-# 使用 -DCMAKE_CXX_FLAGS 将参数强行注入
+# 5. 初始化 CMake 参数 (去除 CMAKE_CXX_FLAGS，改用内部注入)
 CMAKE_OPTS="-DCMAKE_BUILD_TYPE=Release -DUSE_LIBPLL_CMAKE=ON -DUSE_GMP=ON -DUSE_PTHREADS=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5"
-
-if [ -n "$MY_EXTRA_FLAGS" ]; then
-    CMAKE_OPTS="$CMAKE_OPTS -DCMAKE_CXX_FLAGS='$MY_EXTRA_FLAGS' -DCMAKE_C_FLAGS='$MY_EXTRA_FLAGS'"
-fi
 
 case "${OS_TYPE}" in
     "windows")
@@ -108,9 +105,9 @@ find . -name "raxml-ng${EXE_EXT}" -type f -exec cp -f {} "${INSTALL_PREFIX}/bin/
 # 8. 验证
 FINAL_BIN="${INSTALL_PREFIX}/bin/raxml-ng${EXE_EXT}"
 if [ -f "$FINAL_BIN" ]; then
-    log_info "RAxML-NG build SUCCESSFUL!"
+    log_info "Build successful!"
     file "$FINAL_BIN" || true
 else
-    log_err "RAxML-NG binary not found!"
+    log_err "Binary not found!"
     exit 1
 fi
