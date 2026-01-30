@@ -22,37 +22,61 @@ log_info "Final build root: $(pwd)"
 
 # --- 4. 源码深度手术 (针对 Windows/GCC15 的终极补丁) ---
 if [ "$OS_TYPE" == "windows" ]; then
-    log_info "Applying deep compatibility patches for Windows/GCC15..."
+    log_info "Applying high-level compatibility patches for Windows..."
 
-    # 修复 A: 解决 pll_utree_parse 和 pll_rtree_parse 的函数原型冲突
-    # 将旧式的 extern int xxx(); 修改为带参数的正确原型
+    # 修复 A: 解决 asprintf 在 Windows 缺失的问题
+    # 直接在 src/common.h 中注入 asprintf 的实现，这是解决该报错最彻底的方法
+    if [ -f "src/common.h" ]; then
+        log_info "Injecting asprintf shim into src/common.h..."
+        cat >> src/common.h <<EOF
+
+/* RAXML-NG WINDOWS COMPATIBILITY SHIM */
+#ifdef _WIN32
+#include <stdio.h>
+#include <stdarg.h>
+#include <stdlib.h>
+static inline int asprintf(char **strp, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int len = vsnprintf(NULL, 0, fmt, ap);
+    va_end(ap);
+    if (len < 0) return -1;
+    *strp = (char *)malloc(len + 1);
+    if (!*strp) return -1;
+    va_start(ap, fmt);
+    len = vsnprintf(*strp, len + 1, fmt, ap);
+    va_end(ap);
+    return len;
+}
+#endif
+EOF
+    fi
+
+    # 修复 B: 解决 pll_utree_parse 和 pll_rtree_parse 的函数原型冲突
     find libs -name "parse_utree.y" -exec sed -i 's/extern int pll_utree_parse();/struct pll_unode_s; int pll_utree_parse(struct pll_unode_s * tree);/g' {} +
     find libs -name "parse_rtree.y" -exec sed -i 's/extern int pll_rtree_parse();/struct pll_rnode_s; int pll_rtree_parse(struct pll_rnode_s * tree);/g' {} +
 
-    # 修复 B: 解决 Bison 的 %error-verbose 过时警告转错误问题
-    find libs -name "*.y" -exec sed -i 's/%error-verbose/%define parse.error verbose/g' {} +
-
-    # 修复 C: 解决子模块中的 errno 变量名冲突 (上一步的加固)
+    # 修复 C: 解决子模块中的 errno 变量名冲突
     find libs -type f \( -name "*.h" -o -name "*.c" -o -name "*.cpp" -o -name "*.l" -o -name "*.y" \) \
         -exec sed -i 's/\berrno\b/pll_errno/g' {} +
 
-    # 修复 D: 强制提升所有 CMakeLists.txt 的版本
+    # 修复 D: 强制提升所有 CMakeLists.txt 的版本要求
     find . -name "CMakeLists.txt" -exec sed -i 's/cmake_minimum_required *(VERSION *[23]\.[0-9]/cmake_minimum_required(VERSION 3.10/g' {} +
 
-    # 修复 E: 开启编译器“宽容模式”，忽略 C 语言标准不匹配导致的非致命错误
-    # -fpermissive: 宽容处理不规范代码
-    # -Wno-int-conversion: 忽略指针/整数转换警告
-    export CXXFLAGS="$CXXFLAGS -fpermissive -Wno-error=int-conversion -Wno-error=stringop-truncation"
-    export CFLAGS="$CFLAGS -Wno-int-conversion -Wno-error=int-conversion -Wno-error=stringop-truncation"
+    # 修复 E: 屏蔽编译警告
+    MY_EXTRA_FLAGS="-fpermissive -Wno-error=int-conversion -Wno-error=stringop-truncation -Wno-error=format-truncation"
 fi
 
 # 5. 初始化 CMake 参数
+# 使用 -DCMAKE_CXX_FLAGS 将参数强行注入
 CMAKE_OPTS="-DCMAKE_BUILD_TYPE=Release -DUSE_LIBPLL_CMAKE=ON -DUSE_GMP=ON -DUSE_PTHREADS=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+
+if [ -n "$MY_EXTRA_FLAGS" ]; then
+    CMAKE_OPTS="$CMAKE_OPTS -DCMAKE_CXX_FLAGS='$MY_EXTRA_FLAGS' -DCMAKE_C_FLAGS='$MY_EXTRA_FLAGS'"
+fi
 
 case "${OS_TYPE}" in
     "windows")
-        log_info "Setting Windows options..."
-        # 强制静态编译
         CMAKE_OPTS="${CMAKE_OPTS} -DSTATIC_BUILD=ON -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++"
         GENERATOR="MSYS Makefiles"
         ;;
@@ -68,28 +92,20 @@ case "${OS_TYPE}" in
         ;;
 esac
 
-# 6. ARM 适配 (保持不变)
-if [ "${ARCH_TYPE}" == "arm64" ]; then
-    CMAKE_OPTS="${CMAKE_OPTS} -DENABLE_RAXML_SIMD=OFF -DENABLE_PLLMOD_SIMD=OFF"
-    if [[ "$(uname -m)" != "aarch64" && "$(uname -m)" != "arm64" ]]; then
-        CMAKE_OPTS="${CMAKE_OPTS} -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++"
-    fi
-fi
-
-# 7. 执行构建
+# 6. 执行构建
 rm -rf build_dir && mkdir build_dir && cd build_dir
 log_info "Running CMake..."
 cmake .. -G "$GENERATOR" ${CMAKE_OPTS}
 
 log_info "Running Make..."
-# 使用单线程编译以获得清晰的错误输出，如果失败则停止
+# 此时如果失败，make 会输出更清晰的错误信息
 make -j${MAKE_JOBS} || make
 
-# 8. 整理产物
+# 7. 整理产物
 mkdir -p "${INSTALL_PREFIX}/bin"
 find . -name "raxml-ng${EXE_EXT}" -type f -exec cp -f {} "${INSTALL_PREFIX}/bin/" \;
 
-# 9. 验证
+# 8. 验证
 FINAL_BIN="${INSTALL_PREFIX}/bin/raxml-ng${EXE_EXT}"
 if [ -f "$FINAL_BIN" ]; then
     log_info "RAxML-NG build SUCCESSFUL!"
