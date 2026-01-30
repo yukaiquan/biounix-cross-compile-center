@@ -20,21 +20,23 @@ if [ ! -f "CMakeLists.txt" ]; then
 fi
 log_info "Final build root: $(pwd)"
 
-# --- 4. 源码深度补丁 (针对 Windows/GCC15 的终极手术) ---
+# --- 4. 源码深度手术 (针对 Windows/MinGW 最终补丁) ---
 if [ "$OS_TYPE" == "windows" ]; then
-    log_info "Applying deep compatibility patches for Windows..."
+    log_info "Applying robust compatibility patches for Windows..."
 
-    # 修复 A: 注入 asprintf 模拟实现
+    # 修复 A: 以“预置”方式注入 asprintf 实现，并带上独立保护宏
     if [ -f "src/common.h" ]; then
-        log_info "Injecting asprintf shim into src/common.h..."
-        # 使用 cat <<'EOF' (带单引号) 防止 shell 扩展变量内容
-        cat >> src/common.h <<'EOF'
-
-/* RAXML-NG WINDOWS COMPATIBILITY SHIM */
+        log_info "Injecting asprintf shim to the TOP of src/common.h..."
+        cat > shim.h <<'EOF'
+#ifndef _ASPRINTF_SHIM_H
+#define _ASPRINTF_SHIM_H
 #ifdef _WIN32
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
 static inline int asprintf(char **strp, const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -48,19 +50,27 @@ static inline int asprintf(char **strp, const char *fmt, ...) {
     va_end(ap);
     return len;
 }
+#ifdef __cplusplus
+}
+#endif
+#endif
 #endif
 EOF
+        # 将 shim 放到文件最前面
+        cat shim.h src/common.h > src/common.h.new
+        mv src/common.h.new src/common.h
+        rm shim.h
     fi
 
-    # 修复 B: 在 CMakeLists.txt 顶层强制注入编译器标志 (避开命令行引号坑)
-    log_info "Injecting compiler flags into CMakeLists.txt..."
-    sed -i '2i set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive -Wno-error=int-conversion -Wno-error=stringop-truncation -Wno-error=format-truncation")' CMakeLists.txt
-    sed -i '2i set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-int-conversion -Wno-error=int-conversion -Wno-error=stringop-truncation")' CMakeLists.txt
+    # 修复 B: 在 CMakeLists.txt 内部注入参数，解决 GCC 15 兼容性
+    # 采用更简单的 sed 命令避免引号转义问题
+    sed -i '2i set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive")' CMakeLists.txt
+    sed -i '3i set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-int-conversion")' CMakeLists.txt
     
-    # 修复 C: 提升所有子模块的 CMake 策略要求
+    # 修复 C: 提升子模块 CMake 版本要求
     find . -name "CMakeLists.txt" -exec sed -i 's/cmake_minimum_required *(VERSION *[23]\.[0-9]/cmake_minimum_required(VERSION 3.10/g' {} +
 
-    # 修复 D: 解决子模块中的 errno 变量名冲突 (递归替换 libs 目录下所有相关文件)
+    # 修复 D: 递归替换所有子模块中的 errno 变量名
     find libs -type f \( -name "*.h" -o -name "*.c" -o -name "*.cpp" -o -name "*.l" -o -name "*.y" \) \
         -exec sed -i 's/\berrno\b/pll_errno/g' {} +
 
@@ -69,7 +79,7 @@ EOF
     find libs -name "parse_rtree.y" -exec sed -i 's/extern int pll_rtree_parse();/struct pll_rnode_s; int pll_rtree_parse(struct pll_rnode_s * tree);/g' {} +
 fi
 
-# 5. 初始化 CMake 参数 (去除 CMAKE_CXX_FLAGS，改用内部注入)
+# 5. 初始化 CMake 参数
 CMAKE_OPTS="-DCMAKE_BUILD_TYPE=Release -DUSE_LIBPLL_CMAKE=ON -DUSE_GMP=ON -DUSE_PTHREADS=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5"
 
 case "${OS_TYPE}" in
@@ -95,7 +105,7 @@ log_info "Running CMake..."
 cmake .. -G "$GENERATOR" ${CMAKE_OPTS}
 
 log_info "Running Make..."
-# 此时如果失败，make 会输出更清晰的错误信息
+# 使用单线程编译以获得清晰的错误输出，如果失败则停止
 make -j${MAKE_JOBS} || make
 
 # 7. 整理产物
@@ -105,9 +115,9 @@ find . -name "raxml-ng${EXE_EXT}" -type f -exec cp -f {} "${INSTALL_PREFIX}/bin/
 # 8. 验证
 FINAL_BIN="${INSTALL_PREFIX}/bin/raxml-ng${EXE_EXT}"
 if [ -f "$FINAL_BIN" ]; then
-    log_info "Build successful!"
+    log_info "RAxML-NG build SUCCESSFUL!"
     file "$FINAL_BIN" || true
 else
-    log_err "Binary not found!"
+    log_err "RAxML-NG binary not found!"
     exit 1
 fi
