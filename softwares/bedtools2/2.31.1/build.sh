@@ -20,13 +20,13 @@ MAKE_TARGET="all"
 # 4. 平台与架构适配
 case "${OS_TYPE}" in
     "windows")
-        log_info "Optimization for Windows (MSYS2)..."
-        # 核心修复 1：使用 -include cstdint 解决 int64_t / int32_t 未定义报错
-        # 核心修复 2：添加 -D_FILE_OFFSET_BITS=64 确保大文件支持
-        export CXXFLAGS="-O3 -std=c++11 -include cstdint -D_FILE_OFFSET_BITS=64"
+        log_info "Applying Windows POSIX-Compatibility Shim..."
+        # _GNU_SOURCE 和 __USE_MINGW_ANSI_STDIO 联合使用可以解决 asprintf 报错
+        # -include cstdint 解决 int64_t 报错
+        export CXXFLAGS="-O3 -std=c++11 -D_GNU_SOURCE -D__USE_MINGW_ANSI_STDIO -include cstdint -D_FILE_OFFSET_BITS=64"
         export LDFLAGS="-static -static-libgcc -static-libstdc++"
-        # 核心修复 3：Windows 必须链接 ws2_32 以支持内嵌的 HTSlib 网络功能
-        export BT_LIBS="-lz -lbz2 -llzma -lpthread -lws2_32"
+        # 核心修复：添加 -lmman (由 mingw-w64-x86_64-mman-win32 提供)
+        export BT_LIBS="-lz -lbz2 -llzma -lpthread -lws2_32 -lmman"
         ;;
 
     "macos")
@@ -39,8 +39,6 @@ case "${OS_TYPE}" in
 
     "linux")
         log_info "Optimization for Linux..."
-        # 核心修复 4：放弃 -static 全静态（会产生重定位错误），改用“半静态”
-        # 这样能保证在不同 Linux 版本间的兼容性，同时不会报错
         export CXXFLAGS="-O3 -std=c++11 -D_FILE_OFFSET_BITS=64"
         export LDFLAGS="-static-libgcc -static-libstdc++"
         export BT_LIBS="-lz -lbz2 -llzma -lpthread"
@@ -65,8 +63,8 @@ echo "#endif" >> src/utils/version/version_git.h
 log_info "Cleaning..."
 make clean || true
 
-log_info "Running: make -j${MAKE_JOBS} ${MAKE_TARGET}"
-# 关键点：通过命令行参数强制传递 CXXFLAGS 和 BT_LIBS，确保它们覆盖 Makefile 内部变量
+log_info "Running: make -j${MAKE_JOBS}"
+# 强制传递变量覆盖 Makefile
 make -j${MAKE_JOBS} ${MAKE_TARGET} \
     CXX="$CXX" \
     CXXFLAGS="$CXXFLAGS" \
@@ -76,20 +74,16 @@ make -j${MAKE_JOBS} ${MAKE_TARGET} \
 # 7. 整理产物
 mkdir -p "${INSTALL_PREFIX}/bin"
 
-# 检查生成的可执行文件
 if [ -f "bin/bedtools" ]; then
     cp -f bin/bedtools "${INSTALL_PREFIX}/bin/bedtools${EXE_EXT}"
-    log_info "Success: bedtools binary copied."
 else
     log_err "Build failed: bin/bedtools not found."
     exit 1
 fi
 
-# 拷贝配套脚本（bedtools 很多功能依赖 bin/ 下的其他小脚本）
-log_info "Copying auxiliary scripts..."
+# 拷贝配套脚本
 cp -r bin/* "${INSTALL_PREFIX}/bin/" 2>/dev/null || true
 
 # 8. 验证
 FINAL_BIN="${INSTALL_PREFIX}/bin/bedtools${EXE_EXT}"
-log_info "Verifying product format:"
 file "$FINAL_BIN" || true
