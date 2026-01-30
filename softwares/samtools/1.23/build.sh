@@ -10,42 +10,44 @@ source config/platform.env
 cd "${SRC_PATH}"
 log_info "Building samtools Release in: $(pwd)"
 
-# 3. 初始化配置参数 (Release 包不需要 autoreconf)
-# Linux 和 Windows: 禁用 libcurl 以实现 100% 兼容的静态单文件
+# 3. 初始化配置参数
+# --without-curses: 禁用 tview，解决全平台 curses 报错问题，实现全静态编译
+# --disable-libcurl: 禁用网络功能，确保 Windows/Linux 静态单文件兼容性
 if [ "$OS_TYPE" == "macos" ]; then
-    CONF_FLAGS="--prefix=${INSTALL_PREFIX} --enable-libcurl"
+    # macOS 保持 libcurl 开启（动态链接），禁用 curses
+    CONF_FLAGS="--prefix=${INSTALL_PREFIX} --enable-libcurl --without-curses"
 else
-    CONF_FLAGS="--prefix=${INSTALL_PREFIX} --disable-libcurl"
+    # Linux/Windows 禁用 libcurl 和 curses，确保 100% 静态编译成功
+    CONF_FLAGS="--prefix=${INSTALL_PREFIX} --disable-libcurl --without-curses"
 fi
 
 # 4. 平台特定优化
 if [ "$OS_TYPE" == "macos" ]; then
     log_info "Applying macOS Homebrew paths..."
     [ -d "/opt/homebrew" ] && BP="/opt/homebrew" || BP="/usr/local"
-    # 显式包含 ncurses 路径
-    export CPPFLAGS="$CPPFLAGS -I$BP/opt/ncurses/include -I$BP/opt/bzip2/include -I$BP/opt/zlib/include -I$BP/opt/xz/include"
-    export LDFLAGS="$LDFLAGS -L$BP/opt/ncurses/lib -L$BP/opt/bzip2/lib -L$BP/opt/zlib/lib -L$BP/opt/xz/lib"
+    export CPPFLAGS="$CPPFLAGS -I$BP/opt/bzip2/include -I$BP/opt/zlib/include -I$BP/opt/xz/include"
+    export LDFLAGS="$LDFLAGS -L$BP/opt/bzip2/lib -L$BP/opt/zlib/lib -L$BP/opt/xz/lib"
 fi
 
 if [ "$OS_TYPE" == "windows" ]; then
-    log_info "Applying Windows Static Fix (Regex & Ncurses)..."
+    log_info "Applying Windows Static Regex Fix..."
     export LDFLAGS="-static -static-libgcc -static-libstdc++"
-    # Windows 静态链接需要：Regex(tre), 字符终端(ncurses), 国际化(intl), 以及系统网络/基础库
-    export LIBS="-lncurses -ltre -lintl -liconv -lws2_32 -lbcrypt -lcrypt32 -lshlwapi -lpsapi -lpthread"
+    # Windows 静态链接需要 Regex 支持 (tre)
+    export LIBS="-ltre -lintl -liconv -lws2_32 -lbcrypt -lcrypt32 -lshlwapi -lpsapi -lpthread"
 fi
 
 if [ "$OS_TYPE" == "linux" ]; then
+    log_info "Applying Linux Static Flags..."
     export LDFLAGS="-static"
-    # 静态链接 ncurses 往往需要补充 tinfo
-    export LIBS="-ltinfo -lpthread"
     
     if [ "${ARCH_TYPE}" == "arm64" ] && [[ "$(uname -m)" != "aarch64" && "$(uname -m)" != "arm64" ]]; then
         log_info "Cross-compiling for Linux ARM64..."
         export HOST_ALIAS="aarch64-linux-gnu"
         CONF_FLAGS="${CONF_FLAGS} --host=${HOST_ALIAS}"
         export CC="${HOST_ALIAS}-gcc"
+        export AR="${HOST_ALIAS}-ar"
+        export RANLIB="${HOST_ALIAS}-ranlib"
         export LDFLAGS="-static -L/usr/lib/aarch64-linux-gnu"
-        # 交叉编译环境下的库通常已经处理好依赖，只需指定静态标志
     fi
 fi
 
