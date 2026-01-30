@@ -20,23 +20,27 @@ if [ ! -f "CMakeLists.txt" ]; then
 fi
 log_info "Final build root: $(pwd)"
 
-# --- 4. 源码深度手术 (针对 Windows/MinGW 最终补丁) ---
+# --- 4. 源码深度补丁 (针对 Windows/MinGW 的“终极方案”) ---
 if [ "$OS_TYPE" == "windows" ]; then
     log_info "Applying robust compatibility patches for Windows..."
 
-    # 修复 A: 以“预置”方式注入 asprintf 实现，并带上独立保护宏
+    # 修复 A: 注入 asprintf 和 sys/resource.h 的替代实现
     if [ -f "src/common.h" ]; then
-        log_info "Injecting asprintf shim to the TOP of src/common.h..."
+        log_info "Injecting Windows shims to the TOP of src/common.h..."
         cat > shim.h <<'EOF'
-#ifndef _ASPRINTF_SHIM_H
-#define _ASPRINTF_SHIM_H
+#ifndef _RAXML_WINDOWS_SHIM_H
+#define _RAXML_WINDOWS_SHIM_H
 #ifdef _WIN32
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <string.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* asprintf shim */
 static inline int asprintf(char **strp, const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -50,31 +54,48 @@ static inline int asprintf(char **strp, const char *fmt, ...) {
     va_end(ap);
     return len;
 }
+
+/* getrusage shim (for sys/resource.h) */
+#define RUSAGE_SELF 0
+struct rusage {
+    struct { long tv_sec; long tv_usec; } ru_utime;
+    struct { long tv_sec; long tv_usec; } ru_stime;
+    long ru_maxrss;
+};
+static inline int getrusage(int who, struct rusage *r) {
+    memset(r, 0, sizeof(struct rusage));
+    return 0;
+}
+
 #ifdef __cplusplus
 }
 #endif
 #endif
 #endif
 EOF
-        # 将 shim 放到文件最前面
         cat shim.h src/common.h > src/common.h.new
         mv src/common.h.new src/common.h
         rm shim.h
     fi
 
-    # 修复 B: 在 CMakeLists.txt 内部注入参数，解决 GCC 15 兼容性
-    # 采用更简单的 sed 命令避免引号转义问题
+    # 修复 B: 在源码中屏蔽 #include <sys/resource.h>
+    log_info "Commenting out sys/resource.h in sysutil.cpp..."
+    if [ -f "src/util/sysutil.cpp" ]; then
+        sed -i 's/#include <sys\/resource.h>/\/\/ #include <sys\/resource.h>/g' src/util/sysutil.cpp
+    fi
+
+    # 修复 C: 在 CMakeLists.txt 内部注入参数
     sed -i '2i set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive")' CMakeLists.txt
     sed -i '3i set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-int-conversion")' CMakeLists.txt
     
-    # 修复 C: 提升子模块 CMake 版本要求
+    # 修复 D: 提升子模块 CMake 版本要求
     find . -name "CMakeLists.txt" -exec sed -i 's/cmake_minimum_required *(VERSION *[23]\.[0-9]/cmake_minimum_required(VERSION 3.10/g' {} +
 
-    # 修复 D: 递归替换所有子模块中的 errno 变量名
+    # 修复 E: 递归替换所有子模块中的 errno 变量名
     find libs -type f \( -name "*.h" -o -name "*.c" -o -name "*.cpp" -o -name "*.l" -o -name "*.y" \) \
         -exec sed -i 's/\berrno\b/pll_errno/g' {} +
 
-    # 修复 E: 修复 Bison 函数原型声明冲突
+    # 修复 F: 修复 Bison 函数原型声明冲突
     find libs -name "parse_utree.y" -exec sed -i 's/extern int pll_utree_parse();/struct pll_unode_s; int pll_utree_parse(struct pll_unode_s * tree);/g' {} +
     find libs -name "parse_rtree.y" -exec sed -i 's/extern int pll_rtree_parse();/struct pll_rnode_s; int pll_rtree_parse(struct pll_rnode_s * tree);/g' {} +
 fi
@@ -105,7 +126,7 @@ log_info "Running CMake..."
 cmake .. -G "$GENERATOR" ${CMAKE_OPTS}
 
 log_info "Running Make..."
-# 使用单线程编译以获得清晰的错误输出，如果失败则停止
+# 此时如果失败，尝试单核编译以获取准确报错
 make -j${MAKE_JOBS} || make
 
 # 7. 整理产物
