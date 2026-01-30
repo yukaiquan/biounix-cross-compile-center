@@ -7,82 +7,82 @@ source config/platform.env
 [ -f "scripts/utils.sh" ] && source scripts/utils.sh
 
 # 2. 进入源码
+if [ -z "$SRC_PATH" ] || [ ! -d "$SRC_PATH" ]; then
+    log_err "SRC_PATH invalid: '$SRC_PATH'"
+fi
 cd "${SRC_PATH}"
 log_info "Building bedtools2 in: $(pwd)"
 
-# 3. 准备编译参数
-# bedtools 默认使用 g++，我们根据平台切换
+# 3. 准备基础变量
 export CXX="g++"
+# 核心改变：不使用 make static，改为使用 make 并手动注入参数
 MAKE_TARGET="all"
 
 # 4. 平台与架构适配
 case "${OS_TYPE}" in
     "windows")
         log_info "Optimization for Windows (MSYS2)..."
-        export CXXFLAGS="-O3 -static"
+        # 修复 int64_t 报错，并确保静态链接
+        # -D_FILE_OFFSET_BITS=64 是 HTSlib 必需的
+        export CXXFLAGS="-O3 -include stdint.h -D_FILE_OFFSET_BITS=64"
         export LDFLAGS="-static -static-libgcc -static-libstdc++"
-        # Windows 静态编译需要明确指定依赖
-        export LIBS="-lz -lbz2 -llzma -lpthread -lws2_32"
-        MAKE_TARGET="static"
+        # Windows 编译 HTSlib 必须链接 ws2_32
+        export BT_LIBS="-lz -lbz2 -llzma -lpthread -lws2_32"
         ;;
 
     "macos")
         log_info "Optimization for macOS..."
         [ -d "/opt/homebrew" ] && BP="/opt/homebrew" || BP="/usr/local"
-        # macOS 无法完全静态链接系统库，所以走默认 all
         export CXXFLAGS="-O3 -I$BP/opt/zlib/include -I$BP/opt/bzip2/include -I$BP/opt/xz/include"
         export LDFLAGS="-L$BP/opt/zlib/lib -L$BP/opt/bzip2/lib -L$BP/opt/xz/lib"
-        MAKE_TARGET="all"
+        export BT_LIBS="-lz -lbz2 -llzma -lpthread"
         ;;
 
     "linux")
-        export CXXFLAGS="-O3"
-        MAKE_TARGET="static" # Linux 推荐编译 static 版本实现绿色化
+        log_info "Optimization for Linux..."
+        # 放弃全静态，改用“半静态”编译，这能解决 relocation 报错，且能在 99% 的 Linux 上运行
+        export CXXFLAGS="-O3 -D_FILE_OFFSET_BITS=64"
+        export LDFLAGS="-static-libgcc -static-libstdc++"
+        export BT_LIBS="-lz -lbz2 -llzma -lpthread"
         
         if [ "${ARCH_TYPE}" == "arm64" ] && [[ "$(uname -m)" != "aarch64" && "$(uname -m)" != "arm64" ]]; then
             log_info "Cross-compiling for Linux ARM64..."
             export CXX="aarch64-linux-gnu-g++"
             export AR="aarch64-linux-gnu-ar"
-            export LDFLAGS="-static -L/usr/lib/aarch64-linux-gnu"
-        else
-            export LDFLAGS="-static"
+            # 交叉编译需要指定库搜索路径
+            export LDFLAGS="${LDFLAGS} -L/usr/lib/aarch64-linux-gnu"
         fi
         ;;
 esac
 
-# 5. 执行编译
-log_info "Running: make clean"
+# 5. 预处理：解决版本文件生成失败问题
+mkdir -p src/utils/version
+echo "#define VERSION_GIT \"v${PKG_VER}\"" > src/utils/version/version_git.h
+
+# 6. 执行编译
+log_info "Cleaning..."
 make clean || true
 
 log_info "Running: make -j${MAKE_JOBS} ${MAKE_TARGET}"
-# 执行编译。注意：bedtools 编译非常占内存，如果 Runner 内存不足，请减小 -j 后的数字
-make -j${MAKE_JOBS} ${MAKE_TARGET}
+# 注意：我们将 BT_LIBS 传给 make，强制覆盖 Makefile 内部的库定义
+make -j${MAKE_JOBS} ${MAKE_TARGET} CXX="$CXX" BT_LIBS="$BT_LIBS"
 
-# 6. 整理产物
+# 7. 整理产物
 mkdir -p "${INSTALL_PREFIX}/bin"
 
-# bedtools 会生成一个大的主程序 bedtools，以及一系列软链接
-if [ -f "bin/bedtools.static" ]; then
-    cp -f bin/bedtools.static "${INSTALL_PREFIX}/bin/bedtools${EXE_EXT}"
-elif [ -f "bin/bedtools" ]; then
+if [ -f "bin/bedtools" ]; then
     cp -f bin/bedtools "${INSTALL_PREFIX}/bin/bedtools${EXE_EXT}"
-fi
-
-# 拷贝配套的脚本工具 (bedtools 包含很多 python/bash 脚本)
-if [ -d "scripts" ]; then
-    log_info "Copying auxiliary scripts..."
-    # 过滤掉源码，只拷贝脚本
-    cp -r bin/* "${INSTALL_PREFIX}/bin/" 2>/dev/null || true
-fi
-
-# 7. 验证
-FINAL_BIN="${INSTALL_PREFIX}/bin/bedtools${EXE_EXT}"
-if [ -f "$FINAL_BIN" ]; then
-    log_info "Build successful! Binary format:"
-    file "$FINAL_BIN" || true
+    log_info "Primary binary bedtools copied."
 else
-    log_err "Binary not found: $FINAL_BIN"
+    log_err "Build failed: bin/bedtools not found"
     exit 1
 fi
 
-log_info "bedtools2 installed to ${INSTALL_PREFIX}/bin/"
+# 拷贝 bin 目录下的所有其他工具和脚本
+log_info "Copying auxiliary tools..."
+cp -r bin/* "${INSTALL_PREFIX}/bin/" 2>/dev/null || true
+
+# 8. 验证
+FINAL_BIN="${INSTALL_PREFIX}/bin/bedtools${EXE_EXT}"
+log_info "Verifying $FINAL_BIN ..."
+file "$FINAL_BIN" || true
