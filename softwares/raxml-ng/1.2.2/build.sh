@@ -143,17 +143,42 @@ esac
 rm -rf build_dir && mkdir build_dir && cd build_dir
 cmake .. -G "$GENERATOR" ${CMAKE_OPTS}
 make -j${MAKE_JOBS} || make
-
 # 7. 整理产物
 mkdir -p "${INSTALL_PREFIX}/bin"
-find . -name "raxml-ng${EXE_EXT}" -type f -exec cp -f {} "${INSTALL_PREFIX}/bin/" \;
+
+log_info "Collecting binaries..."
+# 灵活搜索：匹配 raxml-ng.exe 或 raxml-ng-static.exe
+# 优先从 build/bin 目录找，那是 CMakeLists 指定的输出地
+FOUND_BIN=""
+
+if [ -f "bin/raxml-ng-static${EXE_EXT}" ]; then
+    FOUND_BIN="bin/raxml-ng-static${EXE_EXT}"
+elif [ -f "bin/raxml-ng${EXE_EXT}" ]; then
+    FOUND_BIN="bin/raxml-ng${EXE_EXT}"
+elif [ -f "raxml-ng-static${EXE_EXT}" ]; then
+    FOUND_BIN="raxml-ng-static${EXE_EXT}"
+else
+    # 最后的宽泛搜索，排除测试程序
+    FOUND_BIN=$(find . -name "raxml-ng*${EXE_EXT}" -type f | grep -v "test" | head -n 1)
+fi
+
+if [ -n "$FOUND_BIN" ] && [ -f "$FOUND_BIN" ]; then
+    log_info "Found binary at: $FOUND_BIN"
+    # 统一命名，去掉 -static 后缀，方便用户使用
+    cp -f "$FOUND_BIN" "${INSTALL_PREFIX}/bin/raxml-ng${EXE_EXT}"
+else
+    log_err "Could not find raxml-ng binary in $(pwd)"
+    ls -R
+    exit 1
+fi
 
 # 8. 验证
 FINAL_BIN="${INSTALL_PREFIX}/bin/raxml-ng${EXE_EXT}"
 if [ -f "$FINAL_BIN" ]; then
     log_info "RAxML-NG build SUCCESSFUL!"
+    log_info "Final binary: $FINAL_BIN"
     file "$FINAL_BIN" || true
 else
-    log_err "Binary not found!"
+    log_err "Final verification failed!"
     exit 1
 fi
