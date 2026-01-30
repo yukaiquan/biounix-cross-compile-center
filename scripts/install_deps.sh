@@ -45,7 +45,17 @@ case "$OS_TYPE" in
     echo "/opt/homebrew/bin:/usr/local/bin" >> $GITHUB_PATH
     ;;
   windows)
-    pacman -S --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-zlib
-    pacman -S --noconfirm --needed $DEPS_MSYS2
+    # pacman -S --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-zlib
+    log_info "Updating MSYS2 database..."
+    # --noconfirm: 不询问
+    # --needed: 如果已经安装了就跳过
+    # --disable-download-timeout: 尝试缓解网络慢的问题
+    pacman -Sy --noconfirm
+
+    log_info "Installing: $DEPS_MSYS2"
+    # 核心修改：使用多次尝试下载，防止单次超时
+    for i in {1..3}; do
+        pacman -S --noconfirm --needed $DEPS_MSYS2 && break || sleep 5
+    done
     ;;
 esac
