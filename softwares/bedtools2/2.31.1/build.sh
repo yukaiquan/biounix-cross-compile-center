@@ -20,12 +20,13 @@ MAKE_TARGET="all"
 # 4. 平台与架构适配
 case "${OS_TYPE}" in
     "windows")
-        log_info "Applying Windows POSIX-Compatibility Shim..."
-        # _GNU_SOURCE 和 __USE_MINGW_ANSI_STDIO 联合使用可以解决 asprintf 报错
-        # -include cstdint 解决 int64_t 报错
-        export CXXFLAGS="-O3 -std=c++11 -D_GNU_SOURCE -D__USE_MINGW_ANSI_STDIO -include cstdint -D_FILE_OFFSET_BITS=64"
+        log_info "Applying Windows POSIX-Compatibility & Type Shims..."
+        # 猛药 1：-D__int64_t=int64_t 解决 LargeFileSupport.h 的报错
+        # 猛药 2：-include stdio.h 解决 asprintf 报错
+        # 猛药 3：-D_GNU_SOURCE 开启 MinGW 扩展功能
+        export CXXFLAGS="-O3 -std=c++11 -D_GNU_SOURCE -D__USE_MINGW_ANSI_STDIO -D__int64_t=int64_t -include cstdint -include stdio.h -D_FILE_OFFSET_BITS=64"
         export LDFLAGS="-static -static-libgcc -static-libstdc++"
-        # 核心修复：添加 -lmman (由 mingw-w64-x86_64-mman-win32 提供)
+        # 链接时加入 -lmman 解决 fastaFromBed 的内存映射报错
         export BT_LIBS="-lz -lbz2 -llzma -lpthread -lws2_32 -lmman"
         ;;
 
@@ -52,7 +53,7 @@ case "${OS_TYPE}" in
         ;;
 esac
 
-# 5. 预处理：解决版本文件生成失败
+# 5. 解决版本文件生成失败
 mkdir -p src/utils/version
 echo "#ifndef VERSION_GIT_H" > src/utils/version/version_git.h
 echo "#define VERSION_GIT_H" >> src/utils/version/version_git.h
@@ -64,7 +65,7 @@ log_info "Cleaning..."
 make clean || true
 
 log_info "Running: make -j${MAKE_JOBS}"
-# 强制传递变量覆盖 Makefile
+# 强制传递变量，特别是 BT_LIBS，否则 Windows 链接阶段会挂
 make -j${MAKE_JOBS} ${MAKE_TARGET} \
     CXX="$CXX" \
     CXXFLAGS="$CXXFLAGS" \
@@ -76,12 +77,13 @@ mkdir -p "${INSTALL_PREFIX}/bin"
 
 if [ -f "bin/bedtools" ]; then
     cp -f bin/bedtools "${INSTALL_PREFIX}/bin/bedtools${EXE_EXT}"
+    log_info "Success: bedtools binary copied."
 else
     log_err "Build failed: bin/bedtools not found."
     exit 1
 fi
 
-# 拷贝配套脚本
+# 拷贝 bin 下的其他工具（intersectBed 等其实是 bedtools 的软链或脚本）
 cp -r bin/* "${INSTALL_PREFIX}/bin/" 2>/dev/null || true
 
 # 8. 验证
