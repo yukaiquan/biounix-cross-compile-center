@@ -6,98 +6,88 @@ source config/global.env
 source config/platform.env
 [ -f "scripts/utils.sh" ] && source scripts/utils.sh
 
-# 2. 进入源码目录并处理可能的嵌套
+# 2. 目录对准逻辑
 if [ -z "$SRC_PATH" ] || [ ! -d "$SRC_PATH" ]; then
-    log_err "SRC_PATH is invalid: '$SRC_PATH'"
+    log_err "SRC_PATH invalid"
 fi
 cd "${SRC_PATH}"
 
-# 核心修复：raxml-ng 的官方 source.zip 解压后通常是 raxml-ng_v1.2.2_source/raxml-ng/...
-# 我们需要确保当前目录下有 CMakeLists.txt
+# 如果当前目录没有 CMakeLists.txt，尝试进入子目录
 if [ ! -f "CMakeLists.txt" ]; then
-    log_info "CMakeLists.txt not found in root, searching in subdirectories..."
-    # 查找包含 CMakeLists.txt 的深度为1的子目录
-    SUB_CMAKE=$(find . -maxdepth 2 -name "CMakeLists.txt" -print -quit | xargs dirname)
-    if [ -n "$SUB_CMAKE" ] && [ "$SUB_CMAKE" != "." ]; then
-        cd "$SUB_CMAKE"
-        log_info "Moved to source root: $(pwd)"
+    log_info "Searching for CMakeLists.txt in subdirectories..."
+    REAL_ROOT=$(find . -maxdepth 2 -name "CMakeLists.txt" -print -quit | xargs dirname)
+    if [ -n "$REAL_ROOT" ] && [ "$REAL_ROOT" != "." ]; then
+        cd "$REAL_ROOT"
     fi
 fi
+log_info "Final Source Root: $(pwd)"
 
-log_info "Build start in: $(pwd)"
-
-# 3. 准备基础 CMake 参数
-# STATIC_BUILD: raxml-ng 内置支持，会尝试静态链接 libpll 和 gmp
-CMAKE_OPTS="-DCMAKE_BUILD_TYPE=Release -DUSE_PTHREADS=ON -DUSE_MPI=OFF -DUSE_GMP=ON"
+# 3. 初始化 CMake 参数
+# USE_LIBPLL_CMAKE: 使用 CMake 编译依赖库 (非常重要)
+# USE_GMP: 开启大数支持，提高数值稳定性
+CMAKE_OPTS="-DCMAKE_BUILD_TYPE=Release -DUSE_LIBPLL_CMAKE=ON -DUSE_GMP=ON -DUSE_PTHREADS=ON"
 
 # 4. 平台与架构适配
 case "${OS_TYPE}" in
     "windows")
-        log_info "Configuring for Windows..."
-        CMAKE_OPTS="${CMAKE_OPTS} -DSTATIC_BUILD=ON"
-        # 强制指定编译器，防止 CMake 找不到 MinGW
-        CMAKE_OPTS="${CMAKE_OPTS} -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++"
+        log_info "Configuring for Windows Static Build..."
+        CMAKE_OPTS="${CMAKE_OPTS} -DSTATIC_BUILD=ON -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++"
         GENERATOR="MSYS Makefiles"
         ;;
-
     "macos")
         log_info "Configuring for macOS..."
         CMAKE_OPTS="${CMAKE_OPTS} -DSTATIC_BUILD=OFF"
         GENERATOR="Unix Makefiles"
-        # 帮助 CMake 找到 Homebrew 的库
+        # 寻找 Homebrew 的 GMP
         [ -d "/opt/homebrew" ] && BP="/opt/homebrew" || BP="/usr/local"
         export CMAKE_PREFIX_PATH="${BP}:${CMAKE_PREFIX_PATH}"
-        # macOS 即使不开启 SIMD，CMake 也会检测，通常 M1/M2 选默认即可
         ;;
-
     "linux")
         log_info "Configuring for Linux..."
         CMAKE_OPTS="${CMAKE_OPTS} -DSTATIC_BUILD=ON"
         GENERATOR="Unix Makefiles"
-
-        # 如果是 ARM64，禁用 x86 特有的 SIMD (AVX/SSE) 优化，否则编译报错
-        if [ "${ARCH_TYPE}" == "arm64" ]; then
-            log_info "Disabling x86 SIMD for ARM64 build"
-            CMAKE_OPTS="${CMAKE_OPTS} -DENABLE_RAXML_SIMD=OFF -DENABLE_PLLMOD_SIMD=OFF"
-            
-            # 交叉编译处理
-            if [[ "$(uname -m)" != "aarch64" && "$(uname -m)" != "arm64" ]]; then
-                log_info "Setting up Cross-Compiler for ARM64"
-                CMAKE_OPTS="${CMAKE_OPTS} -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++"
-            fi
-        fi
         ;;
 esac
 
-# 5. 执行构建
-mkdir -p build_dir && cd build_dir
+# 5. 指令集处理 (针对 ARM 平台必须禁用 SIMD)
+if [ "${ARCH_TYPE}" == "arm64" ]; then
+    log_info "ARM64 detected. Disabling x86 SIMD (AVX/SSE)..."
+    CMAKE_OPTS="${CMAKE_OPTS} -DENABLE_RAXML_SIMD=OFF -DENABLE_PLLMOD_SIMD=OFF"
+    
+    # 交叉编译处理
+    if [ "${OS_TYPE}" == "linux" ] && [[ "$(uname -m)" != "aarch64" && "$(uname -m)" != "arm64" ]]; then
+        log_info "Setting up cross-compiler for ARM64..."
+        CMAKE_OPTS="${CMAKE_OPTS} -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++"
+    fi
+fi
 
-log_info "Running CMake..."
+# 6. 执行构建
+rm -rf build_dir && mkdir build_dir && cd build_dir
+log_info "Running CMake: cmake .. -G \"$GENERATOR\" $CMAKE_OPTS"
 cmake .. -G "$GENERATOR" ${CMAKE_OPTS}
 
-log_info "Running Make (this may take a while)..."
+log_info "Building raxml-ng..."
 make -j${MAKE_JOBS}
 
-# 6. 整理产物
+# 7. 整理产物
 mkdir -p "${INSTALL_PREFIX}/bin"
-
-# raxml-ng 的二进制文件生成位置比较多变
-# 尝试从 build/bin 拷贝，如果不行则全量搜索
+# raxml-ng 的二进制文件可能在 build/bin 或 build/ 直接生成
 if [ -f "bin/raxml-ng${EXE_EXT}" ]; then
     cp -f bin/raxml-ng${EXE_EXT} "${INSTALL_PREFIX}/bin/"
 elif [ -f "raxml-ng${EXE_EXT}" ]; then
     cp -f raxml-ng${EXE_EXT} "${INSTALL_PREFIX}/bin/"
 else
-    log_info "Searching for raxml-ng binary..."
-    find . -maxdepth 3 -name "raxml-ng${EXE_EXT}" -exec cp {} "${INSTALL_PREFIX}/bin/" \;
+    # 暴力搜寻二进制
+    find . -maxdepth 3 -name "raxml-ng${EXE_EXT}" -type f -exec cp -f {} "${INSTALL_PREFIX}/bin/" \;
 fi
 
-# 7. 验证
+# 8. 验证
 FINAL_BIN="${INSTALL_PREFIX}/bin/raxml-ng${EXE_EXT}"
 if [ -f "$FINAL_BIN" ]; then
-    log_info "Build successful! Binary location: $FINAL_BIN"
+    log_info "Build Successful!"
     file "$FINAL_BIN" || true
 else
-    log_err "Binary not found! Build failed."
+    log_err "raxml-ng binary not found. Listing build directory:"
+    ls -R
     exit 1
 fi
