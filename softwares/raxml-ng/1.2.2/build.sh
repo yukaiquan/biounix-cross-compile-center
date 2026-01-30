@@ -19,14 +19,12 @@ if [ ! -f "CMakeLists.txt" ]; then
 fi
 log_info "Final build root: $(pwd)"
 
-# --- 4. 终极源码补丁 (针对 Windows 深度系统调用) ---
+# --- 4. 源码补丁 (针对 Windows 深度兼容性修复) ---
 if [ "$OS_TYPE" == "windows" ]; then
-    log_info "Applying the 'Killer Patch' for Windows compatibility..."
+    log_info "Applying the 'Final Fix' for Windows..."
 
-    # 修复 A: 注入全能 Shim 到 common.h (带重定义保护)
-    # 增加对 posix_memalign, sysconf, sysinfo, realpath, __cpuid 的全面模拟
-    if [ -f "src/common.h" ]; then
-        cat > mingw_shim.h <<'EOF'
+    # 修复 A: 注入全能 Shim (解决 sysinfo, asprintf, cpuid 等问题)
+    cat > mingw_shim.h <<'EOF'
 #ifndef _MINGW_RAXML_SHIM_H
 #define _MINGW_RAXML_SHIM_H
 #ifdef _WIN32
@@ -60,33 +58,44 @@ static inline int asprintf(char **strp, const char *fmt, ...) {
 }
 #endif
 
-// 3. 内存管理模拟
+// 3. 内存管理模拟 (posix_memalign)
+#ifndef posix_memalign
 #define posix_memalign(p, a, s) (((*(p)) = _aligned_malloc((s), (a))), ((*(p)) ? 0 : 12))
+#endif
 
-// 4. 系统信息模拟
-struct sysinfo { uint64_t totalram; };
+// 4. 系统信息模拟 (补全 mem_unit 成员)
+struct sysinfo { uint64_t totalram; int mem_unit; };
 static inline int sysinfo(struct sysinfo* i) {
     MEMORYSTATUSEX s; s.dwLength = sizeof(s);
     GlobalMemoryStatusEx(&s);
     i->totalram = s.ullTotalPhys;
+    i->mem_unit = 1;
     return 0;
 }
 
 // 5. CPU 核心与路径模拟
 #define _SC_NPROCESSORS_ONLN 1
 static inline long sysconf(int n) {
+    (void)n;
     SYSTEM_INFO s; GetSystemInfo(&s);
     return s.dwNumberOfProcessors;
 }
 #define realpath(a, b) _fullpath((b), (a), 260)
 
-// 6. CPUID 适配
+// 6. CPUID 适配 (解决宏定义冲突)
+#ifdef __cpuid
+#undef __cpuid
+#endif
 #define __cpuid(info, level) __get_cpuid(level, (unsigned int*)&info[0], (unsigned int*)&info[1], (unsigned int*)&info[2], (unsigned int*)&info[3])
 
 // 7. 资源占用模拟
 #define RUSAGE_SELF 0
 struct rusage { struct {long tv_sec; long tv_usec;} ru_utime, ru_stime; long ru_maxrss; };
-static inline int getrusage(int w, struct rusage *r) { memset(r, 0, sizeof(struct rusage)); return 0; }
+static inline int getrusage(int w, struct rusage *r) { 
+    (void)w;
+    memset(r, 0, sizeof(struct rusage)); 
+    return 0; 
+}
 
 #ifdef __cplusplus
 }
@@ -94,28 +103,26 @@ static inline int getrusage(int w, struct rusage *r) { memset(r, 0, sizeof(struc
 #endif
 #endif
 EOF
-        # 强制把 shim 插到 common.h 的第一行
-        cat mingw_shim.h src/common.h > src/common.h.tmp && mv src/common.h.tmp src/common.h
-    fi
+    # 将 Shim 插入 common.h 开头
+    cat mingw_shim.h src/common.h > src/common.h.tmp && mv src/common.h.tmp src/common.h
 
-    # 修复 B: 暴力清洗 sysutil.cpp 中的 POSIX 引用
-    log_info "Cleaning sysutil.cpp from unistd/sys headers..."
-    sed -i 's/#include <sys\/resource.h>/\/\/ disabled/g' src/util/sysutil.cpp
-    sed -i 's/#include <sys\/sysinfo.h>/\/\/ disabled/g' src/util/sysutil.cpp
-    sed -i 's/#include <unistd.h>/\/\/ disabled/g' src/util/sysutil.cpp
+    # 修复 B: 强力清洗 sysutil.cpp
+    sed -i 's/#include <sys\/resource.h>/\/\/ shimmed/g' src/util/sysutil.cpp
+    sed -i 's/#include <sys\/sysinfo.h>/\/\/ shimmed/g' src/util/sysutil.cpp
+    sed -i 's/#include <unistd.h>/\/\/ shimmed/g' src/util/sysutil.cpp
     sed -i 's/u_int32_t/uint32_t/g' src/util/sysutil.cpp
 
-    # 修复 C: 修改 CMakeLists.txt 以允许不规范转换并注入 -include
-    sed -i '2i set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive -Wno-error=int-conversion")' CMakeLists.txt
+    # 修复 C: 修改 CMakeLists.txt 屏蔽警告并开启宽松模式
+    sed -i '2i set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive -Wno-error=int-conversion -Wno-error=unused-parameter")' CMakeLists.txt
     
-    # 修复 D: 递归处理子模块
+    # 修复 D: 递归处理子模块兼容性
     find . -name "CMakeLists.txt" -exec sed -i 's/cmake_minimum_required *(VERSION *[23]\.[0-9]/cmake_minimum_required(VERSION 3.10/g' {} +
     find libs -type f \( -name "*.h" -o -name "*.c" -o -name "*.cpp" -o -name "*.l" -o -name "*.y" \) -exec sed -i 's/\berrno\b/pll_errno/g' {} +
     find libs -name "parse_utree.y" -exec sed -i 's/extern int pll_utree_parse();/struct pll_unode_s; int pll_utree_parse(struct pll_unode_s * tree);/g' {} +
     find libs -name "parse_rtree.y" -exec sed -i 's/extern int pll_rtree_parse();/struct pll_rnode_s; int pll_rtree_parse(struct pll_rnode_s * tree);/g' {} +
 fi
 
-# 5. 初始化 CMake 参数
+# 5. CMake 编译
 CMAKE_OPTS="-DCMAKE_BUILD_TYPE=Release -DUSE_LIBPLL_CMAKE=ON -DUSE_GMP=ON -DUSE_PTHREADS=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5"
 
 case "${OS_TYPE}" in
@@ -144,9 +151,9 @@ find . -name "raxml-ng${EXE_EXT}" -type f -exec cp -f {} "${INSTALL_PREFIX}/bin/
 # 8. 验证
 FINAL_BIN="${INSTALL_PREFIX}/bin/raxml-ng${EXE_EXT}"
 if [ -f "$FINAL_BIN" ]; then
-    log_info "CONGRATULATIONS! RAxML-NG build successful!"
+    log_info "RAxML-NG build SUCCESSFUL!"
     file "$FINAL_BIN" || true
 else
-    log_err "Binary not found! Build failed at the final step."
+    log_err "Binary not found!"
     exit 1
 fi
