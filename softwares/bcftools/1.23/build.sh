@@ -10,13 +10,11 @@ source config/platform.env
 cd "${SRC_PATH}"
 log_info "Building bcftools Release in: $(pwd)"
 
-# 3. 初始化配置参数 (注意：Release 包不需要 autoreconf)
-# 核心改动：Linux 和 Windows 都要禁用插件以配合静态编译
+# 3. 初始化配置参数 (Release 包不需要 autoreconf)
+# 强制禁用 plugins 和 libcurl 以确保静态编译的纯净和成功率
 if [ "$OS_TYPE" == "macos" ]; then
-    # macOS 不支持全静态，可以保留插件和 libcurl
     CONF_FLAGS="--prefix=${INSTALL_PREFIX} --enable-libcurl"
 else
-    # Linux 和 Windows: 禁用 libcurl 和 plugins 以实现全静态
     CONF_FLAGS="--prefix=${INSTALL_PREFIX} --disable-libcurl --disable-plugins"
 fi
 
@@ -28,46 +26,48 @@ if [ "$OS_TYPE" == "macos" ]; then
 fi
 
 if [ "$OS_TYPE" == "windows" ]; then
-    # Windows 静态编译标志
+    log_info "Applying Windows Static Regex Fix..."
+    # 强制静态链接
     export LDFLAGS="-static -static-libgcc -static-libstdc++"
-    # 显式链接 Windows 系统库
-    export LIBS="-lws2_32 -lbcrypt -lcrypt32 -lshlwapi -lpsapi -lpthread"
+    # 关键修复：添加 -ltre -lintl -liconv 以解决 regcomp 等符号未定义问题
+    # 同时保留之前的系统库
+    export LIBS="-ltre -lintl -liconv -lws2_32 -lbcrypt -lcrypt32 -lshlwapi -lpsapi -lpthread"
 fi
 
 if [ "$OS_TYPE" == "linux" ]; then
-    # Linux 全静态编译标志
     export LDFLAGS="-static"
-    
-    # 如果是交叉编译 ARM64
     if [ "${ARCH_TYPE}" == "arm64" ] && [[ "$(uname -m)" != "aarch64" && "$(uname -m)" != "arm64" ]]; then
         log_info "Cross-compiling for Linux ARM64..."
         export HOST_ALIAS="aarch64-linux-gnu"
         CONF_FLAGS="${CONF_FLAGS} --host=${HOST_ALIAS}"
         export CC="${HOST_ALIAS}-gcc"
-        export AR="${HOST_ALIAS}-ar"
-        export RANLIB="${HOST_ALIAS}-ranlib"
         export LDFLAGS="-static -L/usr/lib/aarch64-linux-gnu"
     fi
 fi
 
-# 5. 执行配置 (Release 包内置了 configure)
+# 5. 执行配置
 log_info "Configuring with: ${CONF_FLAGS}"
-./configure ${CONF_FLAGS} || { 
-    echo "--- config.log tail ---"; 
-    [ -f config.log ] && tail -n 50 config.log; 
-    exit 1; 
-}
+./configure ${CONF_FLAGS} || { [ -f config.log ] && tail -n 50 config.log; exit 1; }
 
 # 6. 编译与安装
 log_info "Making..."
-# 强制只编译主程序，不编译插件
+# 关键修复：只编译主程序 bcftools
+# 这样即便 Makefile 里包含 plugins 逻辑，也不会被执行，从而规避 Linux 下的 relocation 报错
 make -j${MAKE_JOBS} bcftools
-make install
+
+log_info "Installing..."
+# 手动安装，因为 make install 可能会尝试安装不存在的 plugins
+mkdir -p "${INSTALL_PREFIX}/bin"
+cp -f bcftools${EXE_EXT} "${INSTALL_PREFIX}/bin/"
+# 如果有配套脚本，一并拷贝
+if [ -d "misc" ]; then
+    cp -f misc/*.pl misc/*.py "${INSTALL_PREFIX}/bin/" 2>/dev/null || true
+fi
 
 # 7. 验证
 FINAL_BIN="${INSTALL_PREFIX}/bin/bcftools${EXE_EXT}"
 if [ -f "$FINAL_BIN" ]; then
-    log_info "Build successful! Binary format:"
+    log_info "Build successful!"
     file "$FINAL_BIN" || true
 else
     log_err "Binary not found: $FINAL_BIN"
