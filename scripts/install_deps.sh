@@ -28,6 +28,7 @@ log_info "Installing dependencies for ${OS_TYPE}..."
 case "$OS_TYPE" in
   linux)
     sudo apt-get update
+    sudo apt-get install -y $DEPS_APT
     if [ "${ARCH_TYPE}" == "arm64" ]; then
         log_info "Preparing ARM64 cross-compile environment..."
         sudo dpkg --add-architecture arm64
@@ -38,9 +39,13 @@ case "$OS_TYPE" in
     fi
     ;;
   macos)
+    brew update
     brew install zlib
+    brew install $DEPS_BREW
+    echo "/opt/homebrew/bin:/usr/local/bin" >> $GITHUB_PATH
     ;;
   windows)
     pacman -S --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-zlib
+    pacman -S --noconfirm --needed $DEPS_MSYS2
     ;;
 esac

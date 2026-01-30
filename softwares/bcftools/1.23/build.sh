@@ -1,103 +1,91 @@
 #!/bin/bash
 set -e
 
-# 1. 加载基础配置与工具函数
+# 1. 加载配置
 source config/global.env
 source config/platform.env
 [ -f "scripts/utils.sh" ] && source scripts/utils.sh
-
-# 加载 bcftools 特有的源码配置 (需包含 HTSLIB_URL)
 source softwares/bcftools/1.23/source.env
 
-# 2. 进入源码目录
+# 2. 检查并进入源码
 if [ -z "$SRC_PATH" ] || [ ! -d "$SRC_PATH" ]; then
     log_err "SRC_PATH invalid: '$SRC_PATH'"
 fi
 cd "${SRC_PATH}"
-log_info "Start building bcftools in: $(pwd)"
 
-# 3. 准备 HTSlib (GitHub Source Tag 不含 HTSlib，必须下载)
+# 3. 准备 HTSlib
 if [ ! -d "htslib" ]; then
-    log_info "HTSlib is missing. Downloading matching version..."
+    log_info "Downloading HTSlib..."
     curl -L "${HTSLIB_URL}" -o htslib.tar.gz
     mkdir -p htslib
     tar -zxf htslib.tar.gz -C htslib --strip-components=1
     rm htslib.tar.gz
 fi
 
-# 4. 检查并生成构建系统 (解决 autoheader 和 config.guess 缺失问题)
-# 必须安装 autoconf, automake, libtool, pkg-config
-log_info "Bootstrapping build system with autoreconf..."
+# 4. 解决 autoreconf 找不到的问题 (针对 macOS)
+if [ "$OS_TYPE" == "macos" ]; then
+    export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+fi
 
-# 先为子目录 htslib 生成构建文件
-cd htslib
-autoreconf -vfi
-cd ..
-# 为 bcftools 生成构建文件
+# 5. 引导构建系统
+log_info "Bootstrapping with autoreconf..."
+(cd htslib && autoreconf -vfi)
 autoreconf -vfi
 
-# 5. 初始化配置参数
-# --enable-libcurl: 支持通过 URL 直接读取 VCF/BCF
-# --enable-configure-htslib: 让 bcftools 自动去配置子目录下的 htslib
+# 6. 核心修复：针对平台配置编译器和库路径
 CONF_FLAGS="--prefix=${INSTALL_PREFIX} --enable-libcurl --enable-configure-htslib"
 
-# 6. 针对平台定制静态编译逻辑
-case "${OS_TYPE}" in
-    "windows")
-        log_info "Optimization for Windows (MSYS2) - Static Mode"
-        # 强制静态链接
-        export LDFLAGS="-static -static-libgcc -static-libstdc++"
-        # Windows 下 curl/htslib 需要的系统基础库，不加会报 undefined reference
-        export LIBS="-lws2_32 -lbcrypt -lcrypt32 -lshlwapi -lpsapi -lpthread"
-        # Windows 下建议禁用插件，否则需要复杂的动态链接配置
-        CONF_FLAGS="${CONF_FLAGS} --disable-plugins"
-        ;;
-
-    "linux")
-        log_info "Optimization for Linux - Full Static Mode"
-        export LDFLAGS="-static"
-        
-        # 交叉编译处理 (x86_64 -> ARM64)
-        if [ "${ARCH_TYPE}" == "arm64" ] && [[ "$(uname -m)" != "aarch64" && "$(uname -m)" != "arm64" ]]; then
-            log_info "Linux Cross-Compile detected: Target ARM64"
-            export HOST_ALIAS="aarch64-linux-gnu"
-            CONF_FLAGS="${CONF_FLAGS} --host=${HOST_ALIAS}"
-            export CC="${HOST_ALIAS}-gcc"
-            export AR="${HOST_ALIAS}-ar"
-            export RANLIB="${HOST_ALIAS}-ranlib"
-            # 指向 arm64 的静态库路径
-            export LDFLAGS="-static -L/usr/lib/aarch64-linux-gnu"
+if [ "$OS_TYPE" == "macos" ]; then
+    log_info "Configuring paths for macOS Homebrew keg-only libs..."
+    # 探测 Homebrew 路径 (Intel/Apple Silicon 不同)
+    [ -d "/opt/homebrew" ] && BREW_PREFIX="/opt/homebrew" || BREW_PREFIX="/usr/local"
+    
+    # 针对 bzip2, zlib, xz, curl 补全路径
+    for pkg in bzip2 zlib xz curl; do
+        PKG_DIR="${BREW_PREFIX}/opt/${pkg}"
+        if [ -d "$PKG_DIR" ]; then
+            export CPPFLAGS="$CPPFLAGS -I${PKG_DIR}/include"
+            export LDFLAGS="$LDFLAGS -L${PKG_DIR}/lib"
+            # 特别针对 bzip2，有时需要增加环境变量
+            [ "$pkg" == "bzip2" ] && export BZIP2_PREFIX="${PKG_DIR}"
         fi
-        ;;
+    done
+    export LDFLAGS="$LDFLAGS -Wl,-headerpad_max_install_names"
+fi
 
-    "macos")
-        log_info "Optimization for macOS..."
-        # macOS 不支持内核库全静态，但我们会指向 Homebrew 的库路径
-        for pkg in zlib bzip2 xz curl; do
-            if [ -d "/opt/homebrew/opt/$pkg" ]; then
-                export CPPFLAGS="$CPPFLAGS -I/opt/homebrew/opt/$pkg/include"
-                export LDFLAGS="$LDFLAGS -L/opt/homebrew/opt/$pkg/lib"
-            fi
-        done
-        ;;
-esac
+if [ "$OS_TYPE" == "windows" ]; then
+    export LDFLAGS="-static -static-libgcc -static-libstdc++"
+    export LIBS="-lws2_32 -lbcrypt -lcrypt32 -lshlwapi -lpsapi -lpthread"
+    CONF_FLAGS="${CONF_FLAGS} --disable-plugins"
+fi
 
-# 7. 运行配置、编译与安装
-log_info "Running: ./configure ${CONF_FLAGS}"
-./configure ${CONF_FLAGS} || { log_err "Configure failed. Check config.log"; exit 1; }
+if [ "$OS_TYPE" == "linux" ]; then
+    export LDFLAGS="-static"
+    if [ "${ARCH_TYPE}" == "arm64" ] && [[ "$(uname -m)" != "aarch64" && "$(uname -m)" != "arm64" ]]; then
+        export HOST_ALIAS="aarch64-linux-gnu"
+        CONF_FLAGS="${CONF_FLAGS} --host=${HOST_ALIAS}"
+        export CC="${HOST_ALIAS}-gcc"
+        export LDFLAGS="-static -L/usr/lib/aarch64-linux-gnu"
+    fi
+fi
 
-log_info "Running: make -j${MAKE_JOBS}"
+# 7. 配置、编译、安装
+log_info "Running configure..."
+./configure ${CONF_FLAGS} || { 
+    echo "--- config.log ---"; [ -f config.log ] && tail -n 100 config.log;
+    echo "--- htslib/config.log ---"; [ -f htslib/config.log ] && tail -n 100 htslib/config.log;
+    log_err "Configure failed."; 
+}
+
+log_info "Running make..."
 make -j${MAKE_JOBS}
-
-log_info "Running: make install"
 make install
 
 # 8. 产物验证
 FINAL_BIN="${INSTALL_PREFIX}/bin/bcftools${EXE_EXT}"
 if [ -f "$FINAL_BIN" ]; then
-    log_info "Build successful!"
-    file "$FINAL_BIN" || true
+    log_info "Build successful: $(file $FINAL_BIN)"
 else
-    log_err "Binary not found: $FINAL_BIN"
+    log_err "Binary not found!"
     exit 1
 fi
