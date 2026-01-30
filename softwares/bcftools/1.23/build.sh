@@ -7,50 +7,50 @@ source config/platform.env
 [ -f "scripts/utils.sh" ] && source scripts/utils.sh
 source softwares/bcftools/1.23/source.env
 
-# 2. 检查并进入源码
-if [ -z "$SRC_PATH" ] || [ ! -d "$SRC_PATH" ]; then
-    log_err "SRC_PATH invalid: '$SRC_PATH'"
-fi
+# 2. 进入源码
 cd "${SRC_PATH}"
 
-# 3. 准备 HTSlib
-if [ ! -d "htslib" ]; then
-    log_info "Downloading HTSlib..."
+# 3. 补全 HTSlib
+if [ ! -d "htslib/htscodecs" ]; then
+    log_info "HTSlib or htscodecs missing. Fetching sub-components..."
+    
+    # 下载 HTSlib
     curl -L "${HTSLIB_URL}" -o htslib.tar.gz
     mkdir -p htslib
     tar -zxf htslib.tar.gz -C htslib --strip-components=1
     rm htslib.tar.gz
+
+    # 下载 htscodecs (放入 htslib 内部)
+    curl -L "${HTSCODECS_URL}" -o htscodecs.tar.gz
+    mkdir -p htslib/htscodecs
+    tar -zxf htscodecs.tar.gz -C htslib/htscodecs --strip-components=1
+    rm htscodecs.tar.gz
 fi
 
-# 4. 解决 autoreconf 找不到的问题 (针对 macOS)
+# 4. 路径与工具准备 (针对 macOS)
 if [ "$OS_TYPE" == "macos" ]; then
     export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 fi
 
-# 5. 引导构建系统
-log_info "Bootstrapping with autoreconf..."
+# 5. 级联引导构建系统 (Bootstrap)
+log_info "Bootstrapping htscodecs -> htslib -> bcftools..."
+# 必须按顺序从最底层开始生成 configure
+(cd htslib/htscodecs && autoreconf -vfi)
 (cd htslib && autoreconf -vfi)
 autoreconf -vfi
 
-# 6. 核心修复：针对平台配置编译器和库路径
+# 6. 配置编译参数
 CONF_FLAGS="--prefix=${INSTALL_PREFIX} --enable-libcurl --enable-configure-htslib"
 
+# 7. 平台特定优化
 if [ "$OS_TYPE" == "macos" ]; then
-    log_info "Configuring paths for macOS Homebrew keg-only libs..."
-    # 探测 Homebrew 路径 (Intel/Apple Silicon 不同)
-    [ -d "/opt/homebrew" ] && BREW_PREFIX="/opt/homebrew" || BREW_PREFIX="/usr/local"
-    
-    # 针对 bzip2, zlib, xz, curl 补全路径
+    [ -d "/opt/homebrew" ] && BP="/opt/homebrew" || BP="/usr/local"
     for pkg in bzip2 zlib xz curl; do
-        PKG_DIR="${BREW_PREFIX}/opt/${pkg}"
-        if [ -d "$PKG_DIR" ]; then
-            export CPPFLAGS="$CPPFLAGS -I${PKG_DIR}/include"
-            export LDFLAGS="$LDFLAGS -L${PKG_DIR}/lib"
-            # 特别针对 bzip2，有时需要增加环境变量
-            [ "$pkg" == "bzip2" ] && export BZIP2_PREFIX="${PKG_DIR}"
+        if [ -d "$BP/opt/$pkg" ]; then
+            export CPPFLAGS="$CPPFLAGS -I$BP/opt/$pkg/include"
+            export LDFLAGS="$LDFLAGS -L$BP/opt/$pkg/lib"
         fi
     done
-    export LDFLAGS="$LDFLAGS -Wl,-headerpad_max_install_names"
 fi
 
 if [ "$OS_TYPE" == "windows" ]; then
@@ -69,23 +69,24 @@ if [ "$OS_TYPE" == "linux" ]; then
     fi
 fi
 
-# 7. 配置、编译、安装
-log_info "Running configure..."
+# 8. 执行编译
+log_info "Configuring..."
 ./configure ${CONF_FLAGS} || { 
-    echo "--- config.log ---"; [ -f config.log ] && tail -n 100 config.log;
-    echo "--- htslib/config.log ---"; [ -f htslib/config.log ] && tail -n 100 htslib/config.log;
-    log_err "Configure failed."; 
+    echo "Check htslib/config.log for details"; 
+    [ -f htslib/config.log ] && tail -n 50 htslib/config.log; 
+    exit 1; 
 }
 
-log_info "Running make..."
+log_info "Building..."
 make -j${MAKE_JOBS}
 make install
 
-# 8. 产物验证
+# 9. 验证
 FINAL_BIN="${INSTALL_PREFIX}/bin/bcftools${EXE_EXT}"
 if [ -f "$FINAL_BIN" ]; then
-    log_info "Build successful: $(file $FINAL_BIN)"
+    log_info "Success! Binary format:"
+    file "$FINAL_BIN" || true
 else
-    log_err "Binary not found!"
+    log_err "Build failed, binary not found."
     exit 1
 fi
