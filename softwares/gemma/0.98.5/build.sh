@@ -13,11 +13,11 @@ fi
 cd "${SRC_PATH}"
 log_info "Building GEMMA in: $(pwd)"
 
-# 3. 针对 Windows 的源码预处理与补丁
+# 3. 针对 Windows 的环境深度适配
 if [ "$OS_TYPE" == "windows" ]; then
-    log_info "Applying precision patches for Windows GEMMA..."
+    log_info "Applying Windows-specific fixes for GFortran and OpenBLAS..."
 
-    # A. 创建功能完善的补丁头文件 (mingw_gemma_fix.h)
+    # A. 创建 Shim 头文件 (保持之前的修复)
     cat > mingw_gemma_fix.h <<'EOF'
 #ifndef _MINGW_GEMMA_FIX_H
 #define _MINGW_GEMMA_FIX_H
@@ -31,26 +31,17 @@ if [ "$OS_TYPE" == "windows" ]; then
 #include <stdarg.h>
 #include <process.h>
 #include <signal.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* 1. 基础类型与宏补全 */
 typedef unsigned int uint;
 #ifndef __STRING
 #define __STRING(x) #x
 #endif
-
-/* 2. 补全缺失的 OpenBLAS 宏，解决 gemma.cpp 报错 */
 #ifndef OPENBLAS_VERSION
 #define OPENBLAS_VERSION "0.3.x-msys2"
 #endif
-
-/* 3. 模拟 POSIX mkdir */
 #define mkdir(path, mode) _mkdir(path)
-
-/* 4. 模拟 strndup */
 static inline char* strndup(const char* s, size_t n) {
     size_t len = strnlen(s, n);
     char* new_str = (char*)malloc(len + 1);
@@ -58,16 +49,10 @@ static inline char* strndup(const char* s, size_t n) {
     new_str[len] = '\0';
     return (char*)memcpy(new_str, s, len);
 }
-
-/* 5. 模拟 kill 和 getpid */
 #define kill(pid, sig) raise(sig)
 #define getpid() _getpid()
-
-/* 6. 模拟浮点异常处理 */
 static inline int feenableexcept(int e) { (void)e; return 0; }
 static inline int fedisableexcept(int e) { (void)e; return 0; }
-
-/* 7. 安全的 asprintf 实现 (包含 va_copy) */
 static inline int asprintf(char **strp, const char *fmt, ...) {
     va_list ap, ap2;
     va_start(ap, fmt);
@@ -81,7 +66,6 @@ static inline int asprintf(char **strp, const char *fmt, ...) {
     va_end(ap2);
     return len;
 }
-
 #ifdef __cplusplus
 }
 #endif
@@ -89,23 +73,23 @@ static inline int asprintf(char **strp, const char *fmt, ...) {
 #endif
 EOF
 
-    # B. 源码预处理
-    # 移除无法找到的头文件引用
+    # B. 源码清洗
     sed -i 's/#include <openblas_config.h>/\/\/ disabled/g' src/gemma.cpp
-    # 移除 Makefile 里的 macOS 硬编码路径
     sed -i 's/-isystem\/usr\/local\/opt\/openblas\/include//g' Makefile
 
-    # C. 设置编译环境变量
+    # C. 设置变量：显式包含 MinGW 的库路径以确保找到 libgfortran
     FIX_HEADER="$(pwd)/mingw_gemma_fix.h"
-    # 增加 -Wno-maybe-uninitialized 解决 vc.cpp 中的变量初始化警告报错
+    # 添加 -Wno-maybe-uninitialized 解决 GCC15 报错
     export CXXFLAGS="-O3 -include ${FIX_HEADER} -I/mingw64/include/openblas -std=gnu++11 -Wno-unused-result -Wno-maybe-uninitialized -Wno-unknown-pragmas"
-    export LDFLAGS="-static -static-libgcc -static-libstdc++"
     
-    # 指定链接库，确保顺序：OpenBLAS 先行
-    export LIBS="-lopenblas -lgsl -lgslcblas -lgfortran -lquadmath -lz -lws2_32"
+    # 关键：在 LDFLAGS 中加入 MinGW 库的搜索路径
+    export LDFLAGS="-static -static-libgcc -static-libstdc++ -L/mingw64/lib"
+    
+    # 指定链接库，注意顺序：数学库通常需要放在最后，系统库紧随其后
+    export LIBS="-lopenblas -lgfortran -lquadmath -lgsl -lgslcblas -lz -lws2_32"
     MAKE_VARS="WITH_OPENBLAS=1 SYS=MINGW"
 else
-    # 非 Windows 平台设置
+    # Mac/Linux 设置 (保持不变)
     MAKE_VARS="WITH_OPENBLAS=1"
 fi
 
@@ -127,11 +111,11 @@ if [ "$OS_TYPE" == "linux" ]; then
 fi
 
 # 5. 执行编译
-log_info "Cleaning..."
+log_info "Cleaning and Compiling..."
 make clean || true
 
-log_info "Running: make -j${MAKE_JOBS} ${MAKE_VARS}"
-# 通过变量传递，强行覆盖 Makefile 内部定义的冲突变量
+# 关键：通过命令行参数强制覆盖 Makefile 的 CXXFLAGS, LDFLAGS, LIBS
+log_info "Running make -j${MAKE_JOBS} ${MAKE_VARS}"
 make -j${MAKE_JOBS} ${MAKE_VARS} \
     CXX="${CXX:-g++}" \
     CXXFLAGS="${CXXFLAGS}" \
