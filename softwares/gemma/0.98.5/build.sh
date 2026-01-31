@@ -16,7 +16,7 @@ log_info "Building GEMMA in: $(pwd)"
 # 3. 环境适配
 case "${OS_TYPE}" in
     "windows")
-        log_info "Applying Windows FULL-STATIC patches (including OpenMP)..."
+        log_info "Applying Windows TRUE-STATIC patches (Forcing static libgomp)..."
 
         # A. 创建 Shim 头文件 (保持之前的修复)
         cat > mingw_gemma_fix.h <<'EOF'
@@ -78,14 +78,18 @@ EOF
         sed -i 's/#include <openblas_config.h>/\/\/ disabled/g' src/gemma.cpp
         sed -i 's/-isystem\/usr\/local\/opt\/openblas\/include//g' Makefile
 
-        # C. 强制静态库点名
+        # C. 设置编译环境变量
         FIX_HEADER="$(pwd)/mingw_gemma_fix.h"
-        # 增加 -fopenmp 确保编译器识别 OpenMP 指令
+        # 强制包含 Shim，设置 OpenMP 标志
         export CXXFLAGS="-O3 -include ${FIX_HEADER} -I/mingw64/include/openblas -std=gnu++11 -Wno-unused-result -Wno-maybe-uninitialized -fopenmp"
         
-        # 关键修复：在 LIBS 中添加 -lgomp 解决 OpenBLAS 静态链接报错
-        # 顺序：openblas -> gomp -> gsl -> gfortran -> 系统库
-        export LIBS="-l:libopenblas.a -lgomp -l:libgsl.a -l:libgslcblas.a -l:libgfortran.a -l:libquadmath.a -lz -lws2_32 -lpthread"
+        # 关键修复：
+        # 1. 使用 -l:libgomp.a 强制静态链接 OpenMP 运行时，解决 libgomp-1.dll 缺失问题
+        # 2. 必须包含 -lpthread，因为 gomp 依赖它
+        # 3. 库顺序：openblas -> gomp -> gsl -> 基础数学库 -> 系统库
+        export LIBS="-l:libopenblas.a -l:libgomp.a -l:libgsl.a -l:libgslcblas.a -l:libgfortran.a -l:libquadmath.a -lz -lws2_32 -lpthread"
+        
+        # LDFLAGS 增加 -static 强制全局静态
         export LDFLAGS="-static -static-libgcc -static-libstdc++ -L/mingw64/lib"
         
         MAKE_VARS="WITH_OPENBLAS=1 SYS=MINGW"
@@ -116,8 +120,9 @@ log_info "Cleaning and Compiling..."
 make clean || true
 
 log_info "Running: make ${MAKE_VARS}"
-# 通过命令行传递所有变量
+# 通过命令行传递所有变量以覆盖 Makefile 硬编码
 make -j${MAKE_JOBS} ${MAKE_VARS} \
+    CXX="${CXX:-g++}" \
     CXXFLAGS="${CXXFLAGS}" \
     LDFLAGS="${LDFLAGS}" \
     LIBS="${LIBS}"
@@ -127,7 +132,7 @@ mkdir -p "${INSTALL_PREFIX}/bin"
 [ -f "bin/gemma" ] && cp -f bin/gemma "${INSTALL_PREFIX}/bin/gemma${EXE_EXT}"
 [ -f "gemma" ] && cp -f gemma "${INSTALL_PREFIX}/bin/gemma${EXE_EXT}"
 
-# 6. 验证
+# 6. 验证 (检查是否还有 DLL 依赖)
 log_info "Verifying dependencies of gemma${EXE_EXT}..."
 if [ "$OS_TYPE" == "windows" ]; then
     objdump -p "${INSTALL_PREFIX}/bin/gemma${EXE_EXT}" | grep "DLL Name" || echo "No DLL dependencies found!"
