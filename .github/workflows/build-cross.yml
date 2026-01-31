@@ -87,10 +87,13 @@ jobs:
           update: true
           install: base-devel mingw-w64-x86_64-gcc mingw-w64-x86_64-zlib
 
+      # --- 关键改动 2: 变量透传，不再让脚本猜 OS 和 ARCH ---
       - name: Prepare Environment
         run: |
           echo "S_NAME=${{ inputs.software }}" >> $GITHUB_ENV
           echo "S_VER=${{ inputs.version }}" >> $GITHUB_ENV
+          echo "OS_TYPE=${{ matrix.os-type }}" >> $GITHUB_ENV
+          echo "ARCH_TYPE=${{ matrix.arch }}" >> $GITHUB_ENV
           [ "${{ matrix.os-type }}" == "windows" ] && echo "EXE_EXT=.exe" >> $GITHUB_ENV || echo "EXE_EXT=" >> $GITHUB_ENV
 
       - name: Install Dependencies
