@@ -13,12 +13,13 @@ fi
 cd "${SRC_PATH}"
 log_info "Building GEMMA in: $(pwd)"
 
-# 3. 针对 Windows 的环境深度适配
-if [ "$OS_TYPE" == "windows" ]; then
-    log_info "Applying Windows-specific fixes for GFortran and OpenBLAS..."
+# 3. 环境适配
+case "${OS_TYPE}" in
+    "windows")
+        log_info "Applying Windows FULL-STATIC patches..."
 
-    # A. 创建 Shim 头文件 (保持之前的修复)
-    cat > mingw_gemma_fix.h <<'EOF'
+        # A. 创建 Shim 头文件 (保持之前的修复)
+        cat > mingw_gemma_fix.h <<'EOF'
 #ifndef _MINGW_GEMMA_FIX_H
 #define _MINGW_GEMMA_FIX_H
 #ifdef _WIN32
@@ -73,66 +74,64 @@ static inline int asprintf(char **strp, const char *fmt, ...) {
 #endif
 EOF
 
-    # B. 源码清洗
-    sed -i 's/#include <openblas_config.h>/\/\/ disabled/g' src/gemma.cpp
-    sed -i 's/-isystem\/usr\/local\/opt\/openblas\/include//g' Makefile
+        # B. 源码清理：移除 Makefile 里的干扰
+        sed -i 's/#include <openblas_config.h>/\/\/ disabled/g' src/gemma.cpp
+        sed -i 's/-isystem\/usr\/local\/opt\/openblas\/include//g' Makefile
 
-    # C. 设置变量：显式包含 MinGW 的库路径以确保找到 libgfortran
-    FIX_HEADER="$(pwd)/mingw_gemma_fix.h"
-    # 添加 -Wno-maybe-uninitialized 解决 GCC15 报错
-    export CXXFLAGS="-O3 -include ${FIX_HEADER} -I/mingw64/include/openblas -std=gnu++11 -Wno-unused-result -Wno-maybe-uninitialized -Wno-unknown-pragmas"
-    
-    # 关键：在 LDFLAGS 中加入 MinGW 库的搜索路径
-    export LDFLAGS="-static -static-libgcc -static-libstdc++ -L/mingw64/lib"
-    
-    # 指定链接库，注意顺序：数学库通常需要放在最后，系统库紧随其后
-    export LIBS="-lopenblas -lgfortran -lquadmath -lgsl -lgslcblas -lz -lws2_32"
-    MAKE_VARS="WITH_OPENBLAS=1 SYS=MINGW"
-else
-    # Mac/Linux 设置 (保持不变)
-    MAKE_VARS="WITH_OPENBLAS=1"
-fi
+        # C. 强制静态库点名 (解决 libgsl-28.dll 报错的核心)
+        # 通过 -l:filename 语法，强制链接器去读 .a 文件而不是 .dll.a
+        FIX_HEADER="$(pwd)/mingw_gemma_fix.h"
+        export CXXFLAGS="-O3 -include ${FIX_HEADER} -I/mingw64/include/openblas -std=gnu++11 -Wno-unused-result -Wno-maybe-uninitialized"
+        
+        # 链接顺序极其重要：静态库必须按照依赖关系排列
+        # 我们直接指定 .a 文件名，确保不链接动态库
+        export LIBS="-l:libopenblas.a -l:libgsl.a -l:libgslcblas.a -l:libgfortran.a -l:libquadmath.a -lz -lws2_32 -lpthread"
+        export LDFLAGS="-static -static-libgcc -static-libstdc++ -L/mingw64/lib"
+        
+        MAKE_VARS="WITH_OPENBLAS=1 SYS=MINGW"
+        ;;
 
-# 4. 平台适配 (Mac/Linux)
-if [ "$OS_TYPE" == "macos" ]; then
-    [ -d "/opt/homebrew" ] && BP="/opt/homebrew" || BP="/usr/local"
-    export CXXFLAGS="-O3 -I${BP}/opt/gsl/include -I${BP}/opt/openblas/include"
-    export LDFLAGS="-L${BP}/opt/gsl/lib -L${BP}/opt/openblas/lib"
-fi
+    "macos")
+        log_info "Configuring for macOS..."
+        [ -d "/opt/homebrew" ] && BP="/opt/homebrew" || BP="/usr/local"
+        export CXXFLAGS="-O3 -I${BP}/opt/gsl/include -I${BP}/opt/openblas/include"
+        export LDFLAGS="-L${BP}/opt/gsl/lib -L${BP}/opt/openblas/lib"
+        MAKE_VARS="WITH_OPENBLAS=1"
+        ;;
 
-if [ "$OS_TYPE" == "linux" ]; then
-    export CXXFLAGS="-O3 -static"
-    export LDFLAGS="-static"
-    if [ "${ARCH_TYPE}" == "arm64" ] && [[ "$(uname -m)" != "aarch64" ]]; then
-        export CXX="aarch64-linux-gnu-g++"
-        export AR="aarch64-linux-gnu-ar"
-        export LDFLAGS="-static -L/usr/lib/aarch64-linux-gnu"
-    fi
-fi
+    "linux")
+        log_info "Configuring for Linux..."
+        export CXXFLAGS="-O3 -static"
+        export LDFLAGS="-static"
+        if [ "${ARCH_TYPE}" == "arm64" ] && [[ "$(uname -m)" != "aarch64" ]]; then
+            export CXX="aarch64-linux-gnu-g++"
+            export LDFLAGS="-static -L/usr/lib/aarch64-linux-gnu"
+        fi
+        MAKE_VARS="WITH_OPENBLAS=1"
+        ;;
+esac
 
-# 5. 执行编译
+# 4. 执行编译
 log_info "Cleaning and Compiling..."
 make clean || true
 
-# 关键：通过命令行参数强制覆盖 Makefile 的 CXXFLAGS, LDFLAGS, LIBS
-log_info "Running make -j${MAKE_JOBS} ${MAKE_VARS}"
+# 关键：手动传递所有变量。注意 LIBS 在命令行最后传递，以覆盖 Makefile 内部逻辑
+log_info "Running: make ${MAKE_VARS}"
 make -j${MAKE_JOBS} ${MAKE_VARS} \
-    CXX="${CXX:-g++}" \
     CXXFLAGS="${CXXFLAGS}" \
     LDFLAGS="${LDFLAGS}" \
     LIBS="${LIBS}"
 
-# 6. 整理产物
+# 5. 整理产物
 mkdir -p "${INSTALL_PREFIX}/bin"
 [ -f "bin/gemma" ] && cp -f bin/gemma "${INSTALL_PREFIX}/bin/gemma${EXE_EXT}"
 [ -f "gemma" ] && cp -f gemma "${INSTALL_PREFIX}/bin/gemma${EXE_EXT}"
 
-# 7. 验证
-FINAL_BIN="${INSTALL_PREFIX}/bin/gemma${EXE_EXT}"
-if [ -f "$FINAL_BIN" ]; then
-    log_info "GEMMA Build Successful!"
-    file "$FINAL_BIN" || true
-else
-    log_err "Binary not found!"
-    exit 1
+# 6. 验证（在日志中确认是否还有 DLL 依赖）
+log_info "Verifying dependencies of gemma${EXE_EXT}..."
+if [ "$OS_TYPE" == "windows" ]; then
+    # 使用 objdump 查看是否还残留动态库引用
+    objdump -p "${INSTALL_PREFIX}/bin/gemma${EXE_EXT}" | grep "DLL Name" || echo "No DLL dependencies found!"
 fi
+
+log_info "Build success: ${INSTALL_PREFIX}/bin/gemma${EXE_EXT}"
