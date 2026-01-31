@@ -33,7 +33,7 @@ case "$OS_TYPE" in
         log_info "Preparing ARM64 cross-compile environment..."
         sudo dpkg --add-architecture arm64
         sudo apt-get update
-        sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu zlib1g-dev:arm64 libbz2-dev:arm64 liblzma-dev:arm64 libcurl4-gnutls-dev:arm64 libssl-dev:arm64 libncurses5-dev:arm64
+        sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu zlib1g-dev:arm64 libbz2-dev:arm64 liblzma-dev:arm64 libcurl4-gnutls-dev:arm64 libssl-dev:arm64 libncurses5-dev:arm64 libgsl-dev:arm64 libopenblas-dev:arm64 liblapack-dev:arm64 
     else
         sudo apt-get install -y build-essential zlib1g-dev
     fi
