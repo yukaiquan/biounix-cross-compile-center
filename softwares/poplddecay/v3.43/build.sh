@@ -1,55 +1,54 @@
 #!/bin/bash
 set -e
 
-# 1. 环境加载
+# 1. 环境加载 (加载 global 和 platform，获取 matrix 传进来的变量)
 source config/global.env
 source config/platform.env
 [ -f "scripts/utils.sh" ] && source scripts/utils.sh
 
-# 2. 定位源码 (PopLDdecay 的源码在 src 下)
+# 2. 定位源码
 cd "${SRC_PATH}"
 [[ -d "src" ]] && cd src
 
-# 3. 再次强制校准 OS 变量 (防止某些环境下识别失效)
-if [[ "$(uname -s)" == *"MSYS"* || "$(uname -s)" == *"MINGW"* ]]; then
-    OS_TYPE="windows"
-    EXE_EXT=".exe"
-elif [[ "$(uname -s)" == "Darwin" ]]; then
-    OS_TYPE="macos"
-    EXE_EXT=""
-else
-    OS_TYPE="linux"
-    EXE_EXT=""
-fi
-
-# 4. 设置标准输出文件名
-# 这样无论在哪个系统，编译出来的都是 PopLDdecay 或 PopLDdecay.exe
+# 3. 产物清理 (物理隔离，确保当前目录没有旧的二进制)
 BIN_NAME="PopLDdecay${EXE_EXT}"
+rm -f "PopLDdecay" "PopLDdecay.exe"
 
-log_info "Building standard binary: $BIN_NAME for $OS_TYPE"
+log_info "Matrix Command -> OS: $OS_TYPE | ARCH: $ARCH_TYPE"
 
-# 5. 编译逻辑 (保持之前成功的静态链接参数)
+# 4. 根据 OS_TYPE 执行编译 (直接使用从 Workflow 传进来的变量)
 if [ "$OS_TYPE" == "windows" ]; then
-    g++ -g -O2 -Wall -static -static-libgcc -static-libstdc++ LD_Decay.cpp -o "$BIN_NAME" -lz -lpthread -lws2_32
-elif [ "$OS_TYPE" == "linux" ]; then
-    # Linux 采用全静态编译，解决“缺失动态库”问题
-    if [ "$ARCH_TYPE" == "arm64" ] && [ "$(uname -m)" != "aarch64" ]; then
-        aarch64-linux-gnu-g++ -g -O2 -Wall -static LD_Decay.cpp -o "$BIN_NAME" -lz -lpthread
+    log_info "Building for Windows..."
+    g++ -O3 -Wall -static -static-libgcc -static-libstdc++ LD_Decay.cpp -o "$BIN_NAME" -lz -lpthread -lws2_32
+
+elif [ "$OS_TYPE" == "macos" ]; then
+    log_info "Building for macOS..."
+    # macOS 自动处理，不加 static
+    [ -d "/opt/homebrew/opt/zlib" ] && ZDIR="/opt/homebrew/opt/zlib" || ZDIR="/usr/local/opt/zlib"
+    if [ -d "$ZDIR" ]; then
+        g++ -O3 -Wall -I${ZDIR}/include LD_Decay.cpp -o "$BIN_NAME" -L${ZDIR}/lib -lz -lpthread
     else
-        g++ -g -O2 -Wall -static LD_Decay.cpp -o "$BIN_NAME" -lz -lpthread
+        g++ -O3 -Wall LD_Decay.cpp -o "$BIN_NAME" -lz -lpthread
     fi
+
 else
-    # Mac (不支持静态链接)
-    g++ -g -O2 -Wall LD_Decay.cpp -o "$BIN_NAME" -lz -lpthread
+    # 统一视为 Linux (包括 x64 和 arm64 交叉编译)
+    log_info "Building for Linux..."
+    if [ "$ARCH_TYPE" == "arm64" ]; then
+        log_info "Using ARM64 Cross-Compiler"
+        aarch64-linux-gnu-g++ -O3 -Wall -static LD_Decay.cpp -o "$BIN_NAME" -lz -lpthread
+    else
+        log_info "Using x64 Native Compiler"
+        g++ -O3 -Wall -static LD_Decay.cpp -o "$BIN_NAME" -lz -lpthread
+    fi
 fi
 
-# 6. 整理产物
+# 5. 整理产物
 mkdir -p "${INSTALL_PREFIX}/bin"
+# 先清空目标目录，防止 Linux 的文件留给 Mac
+rm -f "${INSTALL_PREFIX}/bin/PopLDdecay" "${INSTALL_PREFIX}/bin/PopLDdecay.exe"
 cp -f "$BIN_NAME" "${INSTALL_PREFIX}/bin/"
 
-# 拷贝作者自带的配套脚本
-if [ -d "../bin" ]; then
-    cp ../bin/* "${INSTALL_PREFIX}/bin/" 2>/dev/null || true
-fi
-
-log_info "Done. Binary: ${INSTALL_PREFIX}/bin/$BIN_NAME"
+# 6. 现场打印格式（在 GitHub 日志里一眼看出对错）
+log_info "Final Verification in Runner:"
+file "${INSTALL_PREFIX}/bin/$BIN_NAME"
