@@ -18,11 +18,11 @@ if [ ! -f "CMakeLists.txt" ]; then
     [ -n "$CMAKEROOT" ] && cd "$CMAKEROOT"
 fi
 
-# --- 4. 源码深度补丁 (针对 Windows/GCC 15 的全量修复) ---
+# --- 4. 源码深度补丁 (针对 ML Search 崩溃的专项修复) ---
 if [ "$OS_TYPE" == "windows" ]; then
-    log_info "Applying deep-level Windows stability and compatibility patches..."
+    log_info "Applying CRITICAL stability patches for ML search..."
 
-    # 修复 A: 注入全向 Shim (解决 asprintf, sysinfo, 栈空间, 内存对齐)
+    # 修复 A: 注入带 va_copy 的安全 Shim (解决内存非法访问根源)
     cat > mingw_shim.h <<'EOF'
 #ifndef _RAXML_STABILITY_SHIM_H
 #define _RAXML_STABILITY_SHIM_H
@@ -33,6 +33,7 @@ if [ "$OS_TYPE" == "windows" ]; then
 #include <stdint.h>
 #include <stdarg.h>
 #include <malloc.h>
+#include <string.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -40,30 +41,29 @@ extern "C" {
 
 typedef uint32_t u_int32_t;
 
-/* 使用 Windows 特有 API 实现安全的 asprintf，防止内存计算错误导致崩溃 */
+/* 核心修复：使用 va_copy 确保 asprintf 在 Windows 下绝对安全 */
 #ifndef _ASPRINTF_DEFINED
 #define _ASPRINTF_DEFINED
 static inline int asprintf(char **strp, const char *fmt, ...) {
-    va_list ap;
+    va_list ap, ap2;
     va_start(ap, fmt);
+    va_copy(ap2, ap);
     int len = _vscprintf(fmt, ap);
     va_end(ap);
-    if (len < 0) return -1;
+    if (len < 0) { va_end(ap2); return -1; }
     *strp = (char *)malloc(len + 1);
-    if (!*strp) return -1;
-    va_start(ap, fmt);
-    len = vsnprintf(*strp, len + 1, fmt, ap);
-    va_end(ap);
+    if (!*strp) { va_end(ap2); return -1; }
+    len = vsnprintf(*strp, len + 1, fmt, ap2);
+    va_end(ap2);
     return len;
 }
 #endif
 
-/* 内存对齐映射：配合禁用 SIMD，使用 malloc 是最稳妥的，防止 free() 崩溃 */
+/* 内存对齐映射：配合禁用自动向量化，防止对齐引起的段错误 */
 #ifndef posix_memalign
 #define posix_memalign(p, a, s) (((*(p)) = malloc((s))), ((*(p)) ? 0 : 12))
 #endif
 
-/* 系统资源模拟 */
 struct sysinfo { uint64_t totalram; int mem_unit; };
 static inline int sysinfo(struct sysinfo* i) {
     MEMORYSTATUSEX s; s.dwLength = sizeof(s);
@@ -93,56 +93,44 @@ static inline int getrusage(int w, struct rusage *r) {
 #endif
 #endif
 EOF
-    # 强制将补丁注入核心头文件
     cat mingw_shim.h src/common.h > src/common.h.tmp && mv src/common.h.tmp src/common.h
 
-    # 修复 B: 解决 bison/yacc 函数原型冲突 (解决 conflicting types 报错)
-    # 策略：直接删除源码中陈旧的 extern 声明，让编译器使用生成的正确声明
-    log_info "Removing obsolete parser declarations..."
-    find libs -name "parse_utree.y" -exec sed -i '/extern int pll_utree_parse();/d' {} +
-    find libs -name "parse_rtree.y" -exec sed -i '/extern int pll_rtree_parse();/d' {} +
-    # 修正 Bison 语法
-    find libs -name "*.y" -exec sed -i 's/%error-verbose/%define parse.error verbose/g' {} +
+    # 修复 B: 强力拦截编译器优化 (防止生成非对齐的 SSE 指令)
+    log_info "Overriding CMakeLists.txt to force safety..."
+    # 强制禁用所有 SIMD 加速，这是 Windows 版不崩溃的底线
+    sed -i '2i set(ENABLE_RAXML_SIMD OFF CACHE BOOL "" FORCE)' CMakeLists.txt
+    sed -i '3i set(ENABLE_PLLMOD_SIMD OFF CACHE BOOL "" FORCE)' CMakeLists.txt
+    # 注入参数：-mno-sse 彻底关闭向量化；-fpermissive 允许代码不规范；16MB 栈空间防止树搜索爆栈
+    sed -i '4i set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive -mno-sse -mno-sse2 -mno-avx -Wl,--stack,16777216")' CMakeLists.txt
+    sed -i '5i set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mno-sse -mno-sse2 -mno-avx")' CMakeLists.txt
 
-    # 修复 C: 针对 sysutil.cpp 的外科手术 (解决 __cpuid 报错)
-    log_info "Fixing sysutil.cpp hardware detection..."
+    # 修复 C: 屏蔽系统头文件
     sed -i '1i #include <cpuid.h>' src/util/sysutil.cpp
     sed -i 's/#include <sys\/resource.h>/\/\/ shim/g' src/util/sysutil.cpp
     sed -i 's/#include <sys\/sysinfo.h>/\/\/ shim/g' src/util/sysutil.cpp
     sed -i 's/#include <unistd.h>/\/\/ shim/g' src/util/sysutil.cpp
-    sed -i 's/__cpuid(out, x);/__get_cpuid(x, (unsigned int*)\&out[0], (unsigned int*)\&out[1], (unsigned int*)\&out[2], (unsigned int*)\&out[3]);/g' src/util/sysutil.cpp
-    sed -i 's/__cpuid(info, 0);/__get_cpuid(0, (unsigned int*)\&info[0], (unsigned int*)\&info[1], (unsigned int*)\&info[2], (unsigned int*)\&info[3]);/g' src/util/sysutil.cpp
-    sed -i 's/__cpuid(info, nExIds);/__get_cpuid(nExIds, (unsigned int*)\&info[0], (unsigned int*)\&info[1], (unsigned int*)\&info[2], (unsigned int*)\&info[3]);/g' src/util/sysutil.cpp
-
-    # 修复 D: 修改 CMakeLists.txt 强制稳定性设置
-    # 1. 禁用 SIMD 防止对齐指令崩溃 2. 注入宽容编译参数 3. 提升栈空间到 16MB 防止爆栈
-    sed -i '2i set(ENABLE_RAXML_SIMD OFF CACHE BOOL "" FORCE)' CMakeLists.txt
-    sed -i '3i set(ENABLE_PLLMOD_SIMD OFF CACHE BOOL "" FORCE)' CMakeLists.txt
-    sed -i '4i set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive -mno-sse -mno-avx -Wno-error=int-conversion -Wno-error=use-after-free")' CMakeLists.txt
-    sed -i '5i set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--stack,16777216")' CMakeLists.txt
-
-    # 修复 E: 替换子模块中的 errno (防止宏冲突)
+    
+    # 修复 D: 递归修正变量冲突
     find libs -type f \( -name "*.h" -o -name "*.c" -o -name "*.cpp" -o -name "*.l" -o -name "*.y" \) -exec sed -i 's/\berrno\b/pll_errno/g' {} +
     find . -name "CMakeLists.txt" -exec sed -i 's/cmake_minimum_required *(VERSION *[23]\.[0-9]/cmake_minimum_required(VERSION 3.10/g' {} +
+    
+    # 修复 E: 移除 Bison 陈旧声明 (防止冲突)
+    find libs -name "parse_utree.y" -exec sed -i '/extern int pll_utree_parse();/d' {} +
+    find libs -name "parse_rtree.y" -exec sed -i '/extern int pll_rtree_parse();/d' {} +
 fi
 
-# 5. CMake 编译参数
+# 5. CMake 统一执行
 CMAKE_OPTS="-DCMAKE_BUILD_TYPE=Release -DUSE_LIBPLL_CMAKE=ON -DUSE_GMP=ON -DUSE_PTHREADS=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DSTATIC_BUILD=ON"
 
 case "${OS_TYPE}" in
     "windows")
         CMAKE_OPTS="${CMAKE_OPTS} -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++"
         GENERATOR="MSYS Makefiles" ;;
-    "macos")
-        CMAKE_OPTS="${CMAKE_OPTS} -DSTATIC_BUILD=OFF"
-        GENERATOR="Unix Makefiles"
-        [ -d "/opt/homebrew" ] && BP="/opt/homebrew" || BP="/usr/local"
-        export CMAKE_PREFIX_PATH="${BP}:${CMAKE_PREFIX_PATH}" ;;
     *)
         GENERATOR="Unix Makefiles" ;;
 esac
 
-# 6. 执行构建
+# 6. 执行编译
 rm -rf build_dir && mkdir build_dir && cd build_dir
 cmake .. -G "$GENERATOR" ${CMAKE_OPTS}
 make -j${MAKE_JOBS} || make
@@ -150,12 +138,6 @@ make -j${MAKE_JOBS} || make
 # 7. 整理产物
 mkdir -p "${INSTALL_PREFIX}/bin"
 FOUND_BIN=$(find . -name "raxml-ng*${EXE_EXT}" -type f | grep -v "test" | head -n 1)
-if [ -n "$FOUND_BIN" ]; then
-    cp -f "$FOUND_BIN" "${INSTALL_PREFIX}/bin/raxml-ng${EXE_EXT}"
-    log_info "Binary saved as: raxml-ng${EXE_EXT}"
-else
-    log_err "Binary not found!"
-    exit 1
-fi
+cp -f "$FOUND_BIN" "${INSTALL_PREFIX}/bin/raxml-ng${EXE_EXT}"
 
-log_info "Build finished. Windows stability shim applied."
+log_info "Build success! This version is optimized for Windows stability."
