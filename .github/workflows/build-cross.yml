@@ -31,6 +31,7 @@ on:
         type: string
 
 jobs:
+  # --- 任务 1: 动态计算矩阵 ---
   setup:
     runs-on: ubuntu-latest
     outputs:
@@ -38,106 +39,67 @@ jobs:
     steps:
       - id: set-matrix
         run: |
-          # 定义所有可能的平台组合 (JSON 格式)
+          # 每一个组合都必须包含 mshell，否则 shell: ${{ matrix.mshell }} 会报错
           ALL_PLATFORMS='{
             "include": [
-              {"id": "linux-x64", "os-type": "linux", "arch": "x64", "runner": "ubuntu-latest"},
-              {"id": "linux-arm64", "os-type": "linux", "arch": "arm64", "runner": "ubuntu-latest"},
-              {"id": "macos-arm64", "os-type": "macos", "arch": "arm64", "runner": "macos-latest"},
-              {"id": "macos-x64", "os-type": "macos", "arch": "x64", "runner": "macos-15-intel"},
-              {"id": "windows-x64", "os-type": "windows", "arch": "x64", "runner": "windows-latest","mshell": "msys2 {0}"}
+              {"id": "linux-x64",   "os-type": "linux",   "arch": "x64",   "runner": "ubuntu-latest",  "mshell": "bash"},
+              {"id": "linux-arm64", "os-type": "linux",   "arch": "arm64", "runner": "ubuntu-latest",  "mshell": "bash"},
+              {"id": "macos-arm64", "os-type": "macos",   "arch": "arm64", "runner": "macos-latest",   "mshell": "bash"},
+              {"id": "macos-x64",   "os-type": "macos",   "arch": "x64",   "runner": "macos-13",       "mshell": "bash"},
+              {"id": "windows-x64", "os-type": "windows", "arch": "x64",   "runner": "windows-latest", "mshell": "msys2 {0}"}
             ]
           }'
-
-          # 2. 根据输入逻辑进行处理，并务必使用 jq -c 压缩成单行
+          
           if [[ "${{ inputs.platform }}" == "all" ]]; then
-            # 选 all 时，压缩整个 JSON
             RESULT=$(echo "$ALL_PLATFORMS" | jq -c .)
           else
-            # 选特定平台时，过滤并压缩
-            # 使用 --arg 安全传递变量
             RESULT=$(echo "$ALL_PLATFORMS" | jq -c --arg ID "${{ inputs.platform }}" '.include |= map(select(.id == $ID))')
           fi
-          # 3. 输出到环境变量
           echo "matrix=$RESULT" >> $GITHUB_OUTPUT
+
+  # --- 任务 2: 执行编译 ---
   build:
+    needs: setup
     name: ${{ matrix.id }}
     runs-on: ${{ matrix.runner }}
-    # 关键过滤：仅运行用户选择的平台，或运行全部
-    if: |
-      inputs.platform == 'all' || 
-      inputs.platform == matrix.id
-    
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - id: linux-x64
-            os-type: linux
-            arch: x64
-            runner: ubuntu-latest
-            mshell: bash
-          - id: linux-arm64
-            os-type: linux
-            arch: arm64
-            runner: ubuntu-latest # 交叉编译宿主机
-            mshell: bash
-          - id: macos-arm64
-            os-type: macos
-            arch: arm64
-            runner: macos-latest
-            mshell: bash
-          - id: macos-x64
-            os-type: macos
-            arch: x64
-            runner: macos-15-intel
-            mshell: bash
-          - id: windows-x64
-            os-type: windows
-            arch: x64
-            runner: windows-latest
-            mshell: "msys2 {0}"
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
+
+    defaults:
+      run:
+        # 现在所有矩阵项都有 mshell 字段了
+        shell: ${{ matrix.mshell }}
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 1. 物理清理，防止不同 Job 产物混淆 (使用默认 bash 执行)
-      - name: Hard Reset Workspace
+      # 关键：物理隔离，确保每个 Job 开始前 dist 目录是空的
+      - name: Hard Reset
         shell: bash
         run: |
           rm -rf dist build sources build_env.txt
           mkdir -p dist/bin
 
-      # 2. 针对 sambamba 的 D 语言环境安装
       - name: Setup D Language
         if: inputs.software == 'sambamba'
         uses: dlang-community/setup-dlang@v1
         with:
           compiler: ldc-latest
 
-      # 3. Windows MSYS2 初始化
       - name: Setup MSYS2 (Windows Only)
         if: matrix.os-type == 'windows'
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
           update: true
-          # 包含所有之前踩坑发现的必需库
           install: >-
-            base-devel
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-gcc-fortran
-            mingw-w64-x86_64-zlib
-            mingw-w64-x86_64-lz4
-            mingw-w64-x86_64-gsl
-            mingw-w64-x86_64-openblas
-            mingw-w64-x86_64-libsystre
-            mingw-w64-x86_64-mman-win32
+            base-devel mingw-w64-x86_64-gcc mingw-w64-x86_64-zlib 
+            mingw-w64-x86_64-gcc-fortran mingw-w64-x86_64-openblas
 
-      # 4. 环境变量透传 (关键：强制覆盖脚本的自测逻辑，解决 ELF-on-Mac 问题)
+      # 关键改动：强制将矩阵中的系统类型写进环境变量，覆盖脚本的自测
       - name: Prepare Environment
-        shell: bash
         run: |
           echo "S_NAME=${{ inputs.software }}" >> $GITHUB_ENV
           echo "S_VER=${{ inputs.version }}" >> $GITHUB_ENV
@@ -149,34 +111,26 @@ jobs:
             echo "EXE_EXT=" >> $GITHUB_ENV
           fi
 
-      # 5. 安装依赖 (使用平台特定的 Shell)
       - name: Install Dependencies
-        shell: ${{ matrix.mshell }}
         run: bash scripts/install_deps.sh ${{ env.S_NAME }} ${{ env.S_VER }}
 
-      # 6. 下载源码
       - name: Fetch Source
-        shell: ${{ matrix.mshell }}
         run: |
           bash scripts/fetch_source.sh ${{ env.S_NAME }} ${{ env.S_VER }}
           if [ -f "build_env.txt" ]; then cat build_env.txt >> $GITHUB_ENV; fi
 
-      # 7. 执行编译
       - name: Build
-        shell: ${{ matrix.mshell }}
         run: |
           source config/global.env
-          # 强制导出矩阵变量，确保 build.sh 里的 case 匹配 100% 正确
+          # 二次强制导出，确保交叉编译环境 100% 正确
           export OS_TYPE="${{ matrix.os-type }}"
           export ARCH_TYPE="${{ matrix.arch }}"
           if [ -f build_env.txt ]; then source build_env.txt; fi
           bash softwares/${{ env.S_NAME }}/${{ env.S_VER }}/build.sh
 
-      # 8. 产物上传
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          # 产物名包含 ID，防止覆盖
           name: ${{ env.S_NAME }}-${{ env.S_VER }}-${{ matrix.id }}
           path: dist/bin/
           retention-days: 7
