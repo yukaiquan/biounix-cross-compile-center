@@ -9,9 +9,9 @@ source softwares/sambamba/1.0.1/source.env
 
 # 2. 进入源码
 cd "${SRC_PATH}"
-log_info "Building sambamba (Windows Type Casting Fix) in: $(pwd)"
+log_info "Building sambamba using Makefile logic in: $(pwd)"
 
-# 3. 准备 BioD
+# 3. 准备 BioD (必须命名为 BioD)
 if [ ! -d "BioD/bio" ]; then
     log_info "Fetching BioD library..."
     curl -L "${BIOD_URL}" -o BioD_src.tar.gz
@@ -20,80 +20,90 @@ if [ ! -d "BioD/bio" ]; then
     rm BioD_src.tar.gz
 fi
 
-# 4. 环境准备：锁定编译器
+# 4. 获取 LDC2 绝对路径 (从 PowerShell 预捕获的文件)
 if [ "$OS_TYPE" == "windows" ]; then
-    # 获取 PowerShell 捕获的路径
-    LDC_POSIX_EXE=$(cat "${BASE_DIR}/ldc_full_path.txt" | tr -d '\r\n')
-    LDC_BIN_DIR=$(dirname "$LDC_POSIX_EXE")
-    export PATH="$LDC_BIN_DIR:$PATH"
-    # 转换为原生 Windows 路径
-    export DC=$(cygpath -w "$LDC_POSIX_EXE")
-    log_info "Compiler DC is: $DC"
+    LDC_ABS_PATH=$(cat "${BASE_DIR}/ldc_full_path.txt" | tr -d '\r\n')
+    # 强制将编译器目录加入 PATH，确保 make 内部调用 ldmd2 成功
+    export PATH="$(dirname "$LDC_ABS_PATH"):$PATH"
+    log_info "LDC2 Path locked: $LDC_ABS_PATH"
 else
-    export DC=$(which ldc2)
+    LDC_ABS_PATH=$(which ldc2)
 fi
 
-# 5. 【源码手术 A】修复 BioD 模块名
+# 5. 【源码手术】解决 Windows 编译的三大顽疾
 if [ "$OS_TYPE" == "windows" ]; then
-    log_info "Patching BioD source for Windows..."
+    log_info "Applying Windows source patches..."
+
+    # 修复 A: 模块名过时 (core.stdc -> core.sys)
     find BioD -name "*.d" -type f -exec sed -i 's/core.stdc.windows.windows/core.sys.windows.windows/g' {} +
-fi
 
-# 6. 【源码手术 B】修复 SIGPIPE 报错 (精准定位)
-if [ "$OS_TYPE" == "windows" ]; then
-    log_info "Patching SIGPIPE in pileup.d..."
-    # 确保只在 module 声明之后插入一次
-    sed -i '/module /a version(Windows) { enum SIGPIPE = 13; }' sambamba/pileup.d
-fi
+    # 修复 B: 补全缺失的 SIGPIPE 信号
+    if [ -f "sambamba/pileup.d" ]; then
+        sed -i '/^module /a version(Windows) { enum SIGPIPE = 13; }' sambamba/pileup.d
+    fi
 
-# 7. 【源码手术 C】修复 BufferedFile 句柄类型 (绝杀报错点)
-if [ "$OS_TYPE" == "windows" ]; then
-    log_info "Patching BufferedFile handle types in sambamba/utils/common/file.d..."
-    # 这里的正则表达式处理了 new BufferedFile(0) 到 (2) 的所有情况，强制转换为 void*
-    # 兼容可能有空格的情况
-    sed -i 's/BufferedFile\s*(\s*\([0-2]\)\s*/BufferedFile(cast(void*)\1/g' sambamba/utils/common/file.d
+    # 修复 C: 修正 BufferedFile 句柄类型 (int -> void*)
+    # 这是之前导致 "none of the overloads" 报错的关键
+    if [ -f "sambamba/utils/common/file.d" ]; then
+        sed -i 's/BufferedFile(0/BufferedFile(cast(void*)0/g' sambamba/utils/common/file.d
+        sed -i 's/BufferedFile(1/BufferedFile(cast(void*)1/g' sambamba/utils/common/file.d
+        sed -i 's/BufferedFile(2/BufferedFile(cast(void*)2/g' sambamba/utils/common/file.d
+    fi
     
-    # 现场打印一下修改后的内容，以便从日志确认补丁是否打上了
-    log_info "Verifying patch in file.d:"
-    grep "BufferedFile(cast" sambamba/utils/common/file.d || echo "Patch failed to apply!"
+    # 路径分隔符设置
+    P_SEP=";"
+else
+    P_SEP=":"
 fi
 
-# 8. 手动创建版本文件
-log_info "Creating ldc_version_info_.d..."
-mkdir -p utils
+# 6. 准备 Makefile 必需的文件 (模拟 build-setup 目标)
+log_info "Pre-generating version files..."
+mkdir -p utils bin
+echo "${PKG_VER}" > VERSION
 cat > utils/ldc_version_info_.d <<EOF
 module utils.ldc_version_info_;
-enum LDC_VERSION_STRING = "${PKG_VER} (BioUnix Build)";
-enum DMD_VERSION_STRING = "2.098.1";
-enum LLVM_VERSION_STRING = "12.0.1";
+enum LDC_VERSION_STRING = "${PKG_VER} (BioUnix)";
+enum DMD_VERSION_STRING = "2.098";
+enum LLVM_VERSION_STRING = "12.0";
 enum BOOTSTRAP_VERSION_STRING = "LDC";
 EOF
 
-# 9. 修改 meson.build 绕过路径拼接 Bug
-if [ -f "meson.build" ]; then
-    log_info "Re-wiring meson.build..."
-    # 使用相对路径避开 D:/ 与 /d/ 混合
-    sed -i "s|version_info_d_fname = .*|version_info_d_fname = files('utils/ldc_version_info_.d')|g" meson.build
-    # 移除 run_command 块
-    sed -i '/run_command(mkdir_prog/,/endif/d' meson.build
-    sed -i "/run_command('python3'/,/endif/d" meson.build
+# 7. 根据平台执行 Make
+# 我们通过命令行直接覆盖 Makefile 里的变量
+# BIOD_PATH 必须根据平台使用正确的 P_SEP (; 或 :)
+MY_BIOD_PATH="./BioD${P_SEP}./BioD/contrib/msgpack-d/src"
+
+log_info "Starting Make with overridden variables..."
+
+if [ "$OS_TYPE" == "windows" ]; then
+    # Windows 下走 release 目标，并强制指定编译器绝对路径
+    # LIBS 必须包含 zlib 和 lz4
+    make -j${MAKE_JOBS} release \
+        D_COMPILER="$LDC_ABS_PATH" \
+        LDC2="$LDC_ABS_PATH" \
+        BIOD_PATH="$MY_BIOD_PATH" \
+        LIBS="-L-lz -L-llz4"
+elif [ "$OS_TYPE" == "linux" ]; then
+    # Linux 走全静态编译
+    make -j${MAKE_JOBS} static \
+        D_COMPILER="$LDC_ABS_PATH" \
+        BIOD_PATH="$MY_BIOD_PATH"
+else
+    # Mac
+    make -j${MAKE_JOBS} release \
+        D_COMPILER="$LDC_ABS_PATH" \
+        BIOD_PATH="$MY_BIOD_PATH"
 fi
 
-# 10. 配置 Meson 并执行 Ninja
-log_info "Setting up Meson..."
-rm -rf build_dir
-meson setup build_dir --buildtype=release --strip
-
-log_info "Running Ninja..."
-ninja -C build_dir -v
-
-# 11. 整理产物
+# 8. 整理产物
 mkdir -p "${INSTALL_PREFIX}/bin"
-FOUND_BIN=$(find build_dir/ -name "sambamba*" -type f -executable | head -n 1)
+# Makefile 生成的产物名类似于 bin/sambamba-1.0.1
+FOUND_BIN=$(find bin/ -name "sambamba*" -type f -executable | head -n 1)
+
 if [ -n "$FOUND_BIN" ]; then
-    cp -f "$FOUND_BIN" "${INSTALL_PREFIX}/bin/sambamba${EXE_EXT}"
-    log_info "SUCCESS: sambamba compiled and packaged."
+    cp -f "${FOUND_BIN}" "${INSTALL_PREFIX}/bin/sambamba${EXE_EXT}"
+    log_info "SUCCESS: Binary at ${INSTALL_PREFIX}/bin/sambamba${EXE_EXT}"
 else
-    log_err "Compilation finished but binary not found."
+    log_err "Build failed: binary not found in bin/"
     exit 1
 fi
