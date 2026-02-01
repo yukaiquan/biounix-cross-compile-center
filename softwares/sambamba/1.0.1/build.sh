@@ -9,9 +9,9 @@ source softwares/sambamba/1.0.1/source.env
 
 # 2. 进入源码
 cd "${SRC_PATH}"
-log_info "Building sambamba using DUB in: $(pwd)"
+log_info "Building sambamba (Brute Force Mode) in: $(pwd)"
 
-# 3. 准备 BioD 依赖
+# 3. 准备 BioD
 if [ ! -d "BioD/bio" ]; then
     log_info "Fetching BioD library..."
     curl -L "${BIOD_URL}" -o BioD_src.tar.gz
@@ -20,57 +20,64 @@ if [ ! -d "BioD/bio" ]; then
     rm BioD_src.tar.gz
 fi
 
-# 4. 修复 BioD 源码兼容性 (针对 Windows)
+# 4. 获取编译器绝对路径 (从 PowerShell 注入的文件读)
 if [ "$OS_TYPE" == "windows" ]; then
-    log_info "Patching BioD for Windows compatibility..."
+    # 获取 POSIX 风格路径 (/c/...)
+    LDC_POSIX_PATH=$(cat "${BASE_DIR}/ldc_full_path.txt" | tr -d '\r\n')
+    # 转换为 Windows 原生风格 (C:\...)，这是让原生 ldc2.exe 读懂路径的关键
+    LDC_WIN_PATH=$(cygpath -w "$LDC_POSIX_PATH")
+    log_info "LDC2 Windows Path: $LDC_WIN_PATH"
+else
+    LDC_POSIX_PATH=$(which ldc2)
+fi
+
+# 5. 源码手术：修复旧版 BioD 的 Windows 模块名
+if [ "$OS_TYPE" == "windows" ]; then
+    log_info "Fixing BioD source code for modern LDC..."
     find BioD -name "*.d" -exec sed -i 's/core.stdc.windows.windows/core.sys.windows.windows/g' {} +
 fi
 
-# 5. 锁定 DUB 和编译器路径 (从之前的 PowerShell 注入获取)
+# 6. 准备版本信息
+mkdir -p utils
+echo "module utils.ldc_version_info_; enum LDC_VERSION_INFO = \"${PKG_VER}\";" > utils/ldc_version_info_.d
+
+# 7. 构造编译命令
+# 注意：Windows 原生编译器不喜欢 -I./BioD，它喜欢 -IBioD 甚至绝对路径
+log_info "Searching for source files..."
+
+# 获取所有源文件列表
+# 我们需要：当前目录的 .d, sambamba/ 下的 .d, BioD/ 下的 .d, thirdparty/ 下的 .d
+D_FILES=$(find . -name "*.d" | grep -v "contrib/shunit2")
+
+# 设置包含路径
 if [ "$OS_TYPE" == "windows" ]; then
-    LDC_EXE=$(cat "${BASE_DIR}/ldc_full_path.txt" | tr -d '\r\n')
-    DUB_EXE=$(dirname "$LDC_EXE")/dub.exe
-    log_info "DUB Path: $DUB_EXE"
+    # Windows 下路径分隔符用分号，且不建议带 ./
+    INC_FLAGS="-I. -IBioD -IBioD/contrib/msgpack-d/src -Ithirdparty"
+    LDFLAGS_OPTS="-L-lz -L-llz4"
 else
-    DUB_EXE=$(which dub)
+    INC_FLAGS="-I. -IBioD -IBioD/contrib/msgpack-d/src -Ithirdparty"
+    LDFLAGS_OPTS="-L-lz -L-llz4 -L-lpthread"
 fi
 
-# 6. 配置 DUB 本地依赖 (告诉 DUB 去哪里找 BioD)
-log_info "Registering local BioD package..."
-# 使用 --pne (provider non-existent) 避免在 CI 环境下报错
-"$DUB_EXE" add-local BioD 0.2.3
+COMMON_OPTS="-O3 -release -enable-inlining -boundscheck=off"
 
-# 7. 执行 DUB 编译
-log_info "Running DUB build..."
+# 8. 执行编译
+log_info "Starting LDC2 compilation..."
 
-# 定义编译标志
-# --compiler: 指定 ldc2
-# -b release: 优化模式
-# --combined: 将所有源码合并编译 (提高性能)
-# -a x86_64: 指定架构
-DUB_OPTS="--compiler=$([ "$OS_TYPE" == "windows" ] && echo "$LDC_EXE" || echo "ldc2") -b release --combined"
-
-if [ "$OS_TYPE" == "linux" ]; then
-    # Linux 下尝试全静态
-    "$DUB_EXE" build $DUB_OPTS --config=static
-elif [ "$OS_TYPE" == "windows" ]; then
-    # Windows 下 DUB 会自动处理 .exe 后缀和库链接
-    "$DUB_EXE" build $DUB_OPTS
+if [ "$OS_TYPE" == "windows" ]; then
+    # 这里的关键是使用 $LDC_POSIX_PATH (MSYS2可以运行它)，但参数里的路径要干净
+    "$LDC_POSIX_PATH" $COMMON_OPTS $INC_FLAGS -of=bin/sambamba.exe $D_FILES $LDFLAGS_OPTS
 else
-    # Mac
-    "$DUB_EXE" build $DUB_OPTS
+    # Linux/Mac
+    ldc2 $COMMON_OPTS $INC_FLAGS -of=bin/sambamba $D_FILES $LDFLAGS_OPTS
 fi
 
-# 8. 整理产物
+# 9. 整理产物
 mkdir -p "${INSTALL_PREFIX}/bin"
-# DUB 编译出的二进制文件通常就在当前目录
-FOUND_BIN=$(ls sambamba sambamba.exe 2>/dev/null | head -n 1)
-
-if [ -n "$FOUND_BIN" ]; then
-    cp -f "$FOUND_BIN" "${INSTALL_PREFIX}/bin/sambamba${EXE_EXT}"
-    log_info "Success! Binary: ${INSTALL_PREFIX}/bin/sambamba${EXE_EXT}"
+if [ -f "bin/sambamba${EXE_EXT}" ]; then
+    cp -f bin/sambamba${EXE_EXT} "${INSTALL_PREFIX}/bin/"
+    log_info "SUCCESS: Binary created at ${INSTALL_PREFIX}/bin/sambamba${EXE_EXT}"
 else
-    log_err "DUB build finished but binary not found!"
-    ls -F
+    log_err "Compilation finished but binary not found in bin/"
     exit 1
 fi
