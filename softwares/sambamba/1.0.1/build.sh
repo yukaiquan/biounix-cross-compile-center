@@ -20,71 +20,68 @@ if [ ! -d "BioD/bio" ]; then
     rm BioD_src.tar.gz
 fi
 
-# 4. 智能探测 D 编译器
-# 优先使用 PATH 里的 ldc2，如果没有则尝试使用环境变量 DC
-LDC_BIN=$(which ldc2 2>/dev/null || echo "$DC")
-if [ -z "$LDC_BIN" ]; then
-    log_err "LDC2 compiler (ldc2) not found in PATH. Ensure 'path-type: inherit' is set in MSYS2 setup."
-fi
-log_info "Using D compiler: $LDC_BIN"
+# 4. 关键：在 Windows 下寻找 LDC2 的真实绝对路径
+log_info "Locating D compiler..."
+LDC_BIN_PATH=$(which ldc2 2>/dev/null || true)
 
-# 5. 修复版本信息生成逻辑
+if [ -z "$LDC_BIN_PATH" ] && [ "$OS_TYPE" == "windows" ]; then
+    # 如果 which 找不到，去 GitHub Actions 默认缓存路径暴力搜索
+    log_info "which ldc2 failed, searching in toolcache..."
+    # 注意：MSYS2 里的 C 盘路径是 /c/
+    LDC_BIN_PATH=$(find /c/hostedtoolcache/windows/LDC -name "ldc2.exe" 2>/dev/null | head -n 1)
+fi
+
+if [ -z "$LDC_BIN_PATH" ]; then
+    log_err "CRITICAL: ldc2 compiler not found. Path: $PATH"
+fi
+log_info "Found compiler at: $LDC_BIN_PATH"
+
+# 5. 生成版本信息 (手动处理)
 log_info "Generating version info..."
 mkdir -p utils
-# 如果 Python 脚本失败，则手动写入一个保底的版本文件
-python3 ./gen_ldc_version_info.py "$LDC_BIN" > utils/ldc_version_info_.d 2>/dev/null || \
-echo 'module utils.ldc_version_info_; enum LDC_VERSION_INFO = "1.0.1";' > utils/ldc_version_info_.d
-
-# 确保 VERSION 文件存在
+# 避开 gen_ldc_version_info.py 的路径问题，直接生成
+echo 'module utils.ldc_version_info_; enum LDC_VERSION_INFO = "'${PKG_VER}'";' > utils/ldc_version_info_.d
 [[ ! -f "VERSION" ]] && echo "${PKG_VER}" > VERSION
 
-# 6. 设置编译环境变量
-# 告诉链接器寻找 Phobos 运行时库
+# 6. 设置库路径
 export LIBRARY_PATH="${LIBRARY_PATH}:/usr/lib:/usr/local/lib"
 
 # 7. 根据平台准备参数
-MAKE_OPTS="D_COMPILER=$LDC_BIN LDC2=$LDC_BIN"
+# 关键：D_COMPILER 必须是绝对路径
+MAKE_OPTS="D_COMPILER=${LDC_BIN_PATH} LDC2=${LDC_BIN_PATH}"
 
 case "${OS_TYPE}" in
     "linux")
-        log_info "Configuring for Linux Static..."
         BUILD_TARGET="static"
         if [ "${ARCH_TYPE}" == "arm64" ] && [[ "$(uname -m)" != "aarch64" ]]; then
             export DFLAGS="-mtriple=aarch64-linux-gnu -gcc=aarch64-linux-gnu-gcc"
-            export CC="aarch64-linux-gnu-gcc"
         fi
         ;;
     "windows")
-        log_info "Configuring for Windows (MSYS2)..."
         BUILD_TARGET="release"
-        # 强制静态链接
+        # Windows 静态链接库名
         export LIBS="-L-lz -L-llz4"
         mkdir -p bin
         ;;
     "macos")
-        log_info "Configuring for macOS..."
         BUILD_TARGET="release"
         [ -d "/opt/homebrew" ] && export LIBRARY_PATH="${LIBRARY_PATH}:/opt/homebrew/lib"
         ;;
 esac
 
 # 8. 执行编译
-log_info "Running make ${BUILD_TARGET}..."
-# 指定 BIOD_PATH 覆盖 Makefile 中的定义
+# 必须显式传递 D_COMPILER，覆盖 Makefile 里的默认值
+log_info "Running: make ${BUILD_TARGET} ${MAKE_OPTS}"
 make -j${MAKE_JOBS} ${BUILD_TARGET} ${MAKE_OPTS} BIOD_PATH="./BioD:./BioD/contrib/msgpack-d/src"
 
 # 9. 整理产物
 mkdir -p "${INSTALL_PREFIX}/bin"
-# 查找编译出的二进制 (Makefile 生成的文件名通常带版本号)
 FOUND_BIN=$(find bin/ -name "sambamba*" -type f -executable | head -n 1)
 
 if [ -n "$FOUND_BIN" ]; then
     cp -f "${FOUND_BIN}" "${INSTALL_PREFIX}/bin/sambamba${EXE_EXT}"
-    log_info "Binary collected: ${INSTALL_PREFIX}/bin/sambamba${EXE_EXT}"
+    log_info "Binary collected: sambamba${EXE_EXT}"
 else
-    log_err "Build failed: could not find output binary."
+    log_err "Build failed: binary not found."
     exit 1
 fi
-
-# 10. 验证
-file "${INSTALL_PREFIX}/bin/sambamba${EXE_EXT}" || true
