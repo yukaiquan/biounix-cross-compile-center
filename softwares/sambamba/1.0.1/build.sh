@@ -9,7 +9,7 @@ source softwares/sambamba/1.0.1/source.env
 
 # 2. 进入源码
 cd "${SRC_PATH}"
-log_info "Building sambamba (Meson Syntax Fix) in: $(pwd)"
+log_info "Building sambamba (Windows API Fix Mode) in: $(pwd)"
 
 # 3. 准备 BioD
 if [ ! -d "BioD/bio" ]; then
@@ -20,7 +20,7 @@ if [ ! -d "BioD/bio" ]; then
     rm BioD_src.tar.gz
 fi
 
-# 4. 环境准备：锁定编译器 (必须配合 YAML 中的 path-type: inherit)
+# 4. 环境准备
 if [ "$OS_TYPE" == "windows" ]; then
     LDC_POSIX_EXE=$(cat "${BASE_DIR}/ldc_full_path.txt" | tr -d '\r\n')
     LDC_BIN_DIR=$(dirname "$LDC_POSIX_EXE")
@@ -31,22 +31,30 @@ else
     export DC=$(which ldc2)
 fi
 
-# 5. 源码手术 A：修复 BioD 兼容性 (针对 Windows)
+# 5. 【核心修复 A】修复 BioD 模块名引用
 if [ "$OS_TYPE" == "windows" ]; then
-    log_info "Patching BioD for Windows..."
+    log_info "Fixing BioD module references..."
     find BioD -name "*.d" -type f -exec sed -i 's/core.stdc.windows.windows/core.sys.windows.windows/g' {} +
 fi
 
-# 6. 【核心修复】源码手术 B：修复 Windows 缺失 SIGPIPE 的正确方式
-if [ "$OS_TYPE" == "windows" ]; then
-    log_info "Patching SIGPIPE correctly (after module declaration)..."
-    # 仅在报错的 pileup.d 中插入定义，且必须放在 module 声明之后
-    # /module /a 的意思是“在匹配到 module 的行之后追加”
+# 6. 【核心修复 B】修复 SIGPIPE 报错 (仅限 pileup.d)
+if [ "$OS_TYPE" == "windows" ] && [ -f "sambamba/pileup.d" ]; then
+    log_info "Patching SIGPIPE in pileup.d..."
+    # 精准插入到 module 声明之后，不破坏语法
     sed -i '/module /a version(Windows) { enum SIGPIPE = 13; }' sambamba/pileup.d
 fi
 
-# 7. 手动创建完整的版本信息文件
-log_info "Manually creating version file..."
+# 7. 【核心修复 C】修复 BufferedFile 构造函数句柄类型错误
+if [ "$OS_TYPE" == "windows" ] && [ -f "sambamba/utils/common/file.d" ]; then
+    log_info "Patching BufferedFile handles in sambamba/utils/common/file.d..."
+    # 将 0, 1, 2 强制转换为 void* 以匹配 Windows HANDLE 类型
+    sed -i 's/new BufferedFile(0/new BufferedFile(cast(void*)0/g' sambamba/utils/common/file.d
+    sed -i 's/new BufferedFile(1/new BufferedFile(cast(void*)1/g' sambamba/utils/common/file.d
+    sed -i 's/new BufferedFile(2/new BufferedFile(cast(void*)2/g' sambamba/utils/common/file.d
+fi
+
+# 8. 手动创建版本信息文件
+log_info "Preparing version info..."
 mkdir -p utils
 cat > utils/ldc_version_info_.d <<EOF
 module utils.ldc_version_info_;
@@ -56,33 +64,28 @@ enum LLVM_VERSION_STRING = "12.0.1";
 enum BOOTSTRAP_VERSION_STRING = "LDC";
 EOF
 
-# 8. 修改 meson.build 逻辑
+# 9. 修改 meson.build 逻辑
 if [ -f "meson.build" ]; then
-    log_info "Re-wiring meson.build..."
-    # 指向我们建好的版本文件
+    log_info "Patching meson.build..."
     sed -i "s|version_info_d_fname = .*|version_info_d_fname = files('utils/ldc_version_info_.d')|g" meson.build
-    
-    # 移除会报错的 run_command 块（适配 Windows 路径拼接 Bug）
     sed -i '/run_command(mkdir_prog/,/endif/d' meson.build
     sed -i "/run_command('python3'/,/endif/d" meson.build
 fi
 
-# 9. 配置 Meson
-log_info "Configuring Meson..."
+# 10. 配置 Meson 并执行 Ninja
+log_info "Running Meson and Ninja..."
 rm -rf build_dir
 meson setup build_dir --buildtype=release --strip
-
-# 10. 执行编译 (Ninja)
-log_info "Running Ninja..."
-# -v 开启详细模式，方便看到每一条编译指令
-ninja -v -C build_dir
+ninja -C build_dir
 
 # 11. 整理产物
 mkdir -p "${INSTALL_PREFIX}/bin"
-if [ -f "build_dir/sambamba${EXE_EXT}" ]; then
-    cp -f "build_dir/sambamba${EXE_EXT}" "${INSTALL_PREFIX}/bin/"
-    log_info "SUCCESS: Binary created."
+# 搜索产物名（兼容 sambamba.exe）
+FOUND_BIN=$(find build_dir/ -name "sambamba*" -type f -executable | head -n 1)
+if [ -n "$FOUND_BIN" ]; then
+    cp -f "$FOUND_BIN" "${INSTALL_PREFIX}/bin/sambamba${EXE_EXT}"
+    log_info "Build successful!"
 else
-    FOUND_BIN=$(find build_dir/ -name "sambamba${EXE_EXT}" -type f | head -n 1)
-    [ -n "$FOUND_BIN" ] && cp -f "$FOUND_BIN" "${INSTALL_PREFIX}/bin/" || { log_err "Binary not found"; exit 1; }
+    log_err "Build failed: Binary not found."
+    exit 1
 fi
