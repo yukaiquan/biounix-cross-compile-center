@@ -85,8 +85,8 @@ jobs:
           mkdir -p dist/bin
 
         # --- 专门为 sambamba 准备 D 语言环境 ---
-      - name: Setup D Language (Sambamba only)
-        if: github.event.inputs.software == 'sambamba'
+      - name: Setup D Language
+        if: inputs.software == 'sambamba'
         uses: dlang-community/setup-dlang@v1
         with:
           compiler: ldc-latest

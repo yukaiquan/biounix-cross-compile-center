@@ -1,17 +1,17 @@
 #!/bin/bash
 set -e
 
-# 1. 加载配置
+# 1. 环境加载
 source config/global.env
 source config/platform.env
 [ -f "scripts/utils.sh" ] && source scripts/utils.sh
 source softwares/sambamba/1.0.1/source.env
 
-# 2. 进入源码目录
+# 2. 进入源码
 cd "${SRC_PATH}"
-log_info "Building sambamba in: $(pwd)"
+log_info "Building sambamba via Makefile in: $(pwd)"
 
-# 3. 准备 BioD (Case-sensitive Fix)
+# 3. 准备 BioD (必须严格按照 Makefile 定义的路径)
 if [ ! -d "BioD/bio" ]; then
     log_info "Fetching BioD library..."
     curl -L "${BIOD_URL}" -o BioD_src.tar.gz
@@ -20,45 +20,65 @@ if [ ! -d "BioD/bio" ]; then
     rm BioD_src.tar.gz
 fi
 
-# 4. 生成版本信息
-if [ -f "gen_ldc_version_info.py" ]; then
-    python3 gen_ldc_version_info.py v${PKG_VER} > ldc_version_info.d || true
-fi
+# 4. 设置环境变量
+# Makefile 需要知道 LIBRARY_PATH 来找 D 运行库
+# setup-dlang 插件会自动设置一些变量，但我们需要手动补全链接参数
+export LIBRARY_PATH="${LIBRARY_PATH}:/usr/lib:/usr/local/lib"
 
-# 5. 设置编译器标志
-LDC="ldc2"
-# 关键：告诉 LDC 包含当前目录、BioD 目录和第三方目录
-D_FLAGS="-O3 -release -flto=full -I=. -IBioD -Ithirdparty"
+# 5. 根据平台准备参数
+MAKE_OPTS="D_COMPILER=ldc2"
 
-# 6. 平台适配
 case "${OS_TYPE}" in
     "linux")
-        D_FLAGS="${D_FLAGS} -static -L-lz -L-llz4 -L-lpthread"
+        log_info "Configuring for Linux Static..."
+        # Linux 下使用静态编译目标
+        BUILD_TARGET="static"
         if [ "${ARCH_TYPE}" == "arm64" ] && [[ "$(uname -m)" != "aarch64" ]]; then
-            D_FLAGS="${D_FLAGS} -mtriple=aarch64-linux-gnu -gcc=aarch64-linux-gnu-gcc"
+            log_info "Cross-compiling for ARM64..."
+            # LDC 交叉编译参数
+            export DFLAGS="-mtriple=aarch64-linux-gnu -gcc=aarch64-linux-gnu-gcc"
+            export CC="aarch64-linux-gnu-gcc"
         fi
         ;;
-    "macos")
-        [ -d "/opt/homebrew" ] && BP="/opt/homebrew" || BP="/usr/local"
-        D_FLAGS="${D_FLAGS} -L-L${BP}/lib -L-lz -L-llz4"
-        ;;
+
     "windows")
-        # Windows 静态链接 zlib 和 lz4 的顺序
-        D_FLAGS="${D_FLAGS} -static -L-lz -L-llz4"
+        log_info "Configuring for Windows (MSYS2)..."
+        # Windows 下 Makefile 可能不支持 'static' 目标，直接用 release
+        BUILD_TARGET="release"
+        # 强制添加 .exe 后缀变量（Makefile 中 OUT 定义用到了）
+        # 但 Makefile 用的是 VERSION 文件，我们手动创建一个兼容名
+        mkdir -p bin
+        ;;
+
+    "macos")
+        log_info "Configuring for macOS..."
+        BUILD_TARGET="release"
+        [ -d "/opt/homebrew" ] && export LIBRARY_PATH="${LIBRARY_PATH}:/opt/homebrew/lib"
         ;;
 esac
 
-# 7. 编译
-# Sambamba 比较特殊，建议直接列出所有 .d 文件
-log_info "Compiling with LDC2..."
-$LDC $D_FLAGS -of=sambamba${EXE_EXT} \
-    $(find sambamba/ -name "*.d") \
-    $(find BioD/bio -name "*.d") \
-    $(find thirdparty/ -name "*.d") \
-    $([ -f ldc_version_info.d ] && echo "ldc_version_info.d")
+# 6. 执行编译
+log_info "Running make ${BUILD_TARGET} ${MAKE_OPTS}"
 
-# 8. 产物整理
+# 修复：Makefile 里的 VERSION 文件可能缺失
+[[ ! -f "VERSION" ]] && echo "${PKG_VER}" > VERSION
+
+# 运行 Makefile
+make -j${MAKE_JOBS} ${BUILD_TARGET} ${MAKE_OPTS}
+
+# 7. 整理产物
 mkdir -p "${INSTALL_PREFIX}/bin"
-cp -f "sambamba${EXE_EXT}" "${INSTALL_PREFIX}/bin/"
+# Makefile 生成的文件名通常是 bin/sambamba-1.0.1
+# 我们统一重命名为 sambamba
+FOUND_BIN=$(find bin/ -name "sambamba*" -type f -executable | head -n 1)
 
-log_info "Done. Binary at: ${INSTALL_PREFIX}/bin/sambamba${EXE_EXT}"
+if [ -n "$FOUND_BIN" ]; then
+    cp -f "${FOUND_BIN}" "${INSTALL_PREFIX}/bin/sambamba${EXE_EXT}"
+    log_info "Binary collected: sambamba${EXE_EXT}"
+else
+    log_err "Build failed: could not find output binary in bin/"
+    exit 1
+fi
+
+# 8. 验证
+file "${INSTALL_PREFIX}/bin/sambamba${EXE_EXT}" || true
