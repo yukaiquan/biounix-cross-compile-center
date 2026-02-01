@@ -120,6 +120,17 @@ jobs:
             echo "EXE_EXT=" >> $GITHUB_ENV
           fi
 
+      - name: Locate LDC for Windows
+        if: matrix.os-type == 'windows' && inputs.software == 'sambamba'
+        shell: powershell
+        run: |
+          # 1. 找到 ldc2.exe 的绝对路径
+          $ldcPath = (Get-Command ldc2.exe).Source
+          # 2. 转换为 MSYS2 识别的路径格式 (例如 C:\... -> /c/...)
+          $posixPath = $ldcPath.Replace('\', '/').Replace('C:', '/c').Replace('c:', '/c')
+          # 3. 写入当前目录下的临时文件
+          $posixPath | Out-File -FilePath "ldc_full_path.txt" -Encoding ascii
+          Write-Host "LDC Absolute Path Found: $posixPath"
 
       - name: Install Dependencies
         run: bash scripts/install_deps.sh ${{ env.S_NAME }} ${{ env.S_VER }}
