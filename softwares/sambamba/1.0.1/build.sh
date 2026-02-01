@@ -11,54 +11,64 @@ source softwares/sambamba/1.0.1/source.env
 cd "${SRC_PATH}"
 log_info "Building sambamba in: $(pwd)"
 
-# 3. 准备 BioD (确保目录名和 Makefile 匹配)
+# 3. 准备 BioD
 if [ ! -d "BioD/bio" ]; then
     log_info "Fetching BioD library..."
-    # 增加重试逻辑
     curl -L "${BIOD_URL}" -o BioD_src.tar.gz
     mkdir -p BioD
     tar -xf BioD_src.tar.gz -C BioD --strip-components=1
     rm BioD_src.tar.gz
 fi
 
-# 4. 关键：锁定 LDC2 编译器的物理绝对路径
-log_info "Locating D compiler (LDC2)..."
+# 4. 【核心修复】暴力锁定 LDC2 编译器的真实绝对路径
+log_info "Locating D compiler (LDC2) - Brute force mode..."
+
+LDC_ABS_PATH=""
 
 if [ "$OS_TYPE" == "windows" ]; then
-    # 在 GitHub Actions 中，setup-dlang 会设置 $DC 环境变量
-    # 我们需要将其转换为 MSYS2 识别的 /c/ 路径格式
-    if [ -n "$DC" ]; then
+    # 策略 A: 从 setup-dlang 提供的 DC 变量转换
+    if [[ -n "$DC" && "$DC" != "ldc2" ]]; then
         LDC_ABS_PATH=$(cygpath -u "$DC")
-    else
-        # 暴力搜索备用方案
-        LDC_ABS_PATH=$(ls /c/hostedtoolcache/windows/LDC/*/x64/bin/ldc2.exe 2>/dev/null | head -n 1)
+    fi
+
+    # 策略 B: 如果 A 不行，去 Windows 默认工具缓存路径暴力查找
+    if [[ -z "$LDC_ABS_PATH" || ! -f "$LDC_ABS_PATH" ]]; then
+        log_info "Searching C:/hostedtoolcache for ldc2.exe..."
+        # MSYS2 下 C 盘路径是 /c/
+        LDC_ABS_PATH=$(find /c/hostedtoolcache/windows/LDC -name "ldc2.exe" 2>/dev/null | head -n 1)
+    fi
+    
+    # 策略 C: 最后的挣扎，在环境变量中找带有 ldc2 的路径
+    if [[ -z "$LDC_ABS_PATH" ]]; then
+        LDC_ABS_PATH=$(command -v ldc2.exe 2>/dev/null || which ldc2 2>/dev/null || echo "")
     fi
 else
     LDC_ABS_PATH=$(which ldc2)
 fi
 
-# 最后的防错检查
-if [[ -z "$LDC_ABS_PATH" || "$LDC_ABS_PATH" == "ldc2" ]]; then
-    log_err "CRITICAL: Could not find full path for ldc2. DC env is: $DC"
+# 校验：确保拿到的是绝对路径（以 / 开头）
+if [[ -z "$LDC_ABS_PATH" || ! "$LDC_ABS_PATH" =~ ^/ ]]; then
+    log_err "CRITICAL: Could not find the absolute path of LDC2. Current PATH is: $PATH"
 fi
 
-log_info "LDC2 binary LOCKED at: $LDC_ABS_PATH"
+log_info "LDC2 binary FOUND at: $LDC_ABS_PATH"
 
-# 强制将编译器目录加入 PATH，确保 make 的子进程能看到同目录的其他 D 工具
+# 强制修正：将编译器所在目录加入 PATH，防止编译过程中调用同目录工具失败
 export PATH="$(dirname "$LDC_ABS_PATH"):$PATH"
 
-# 5. 生成版本信息 (手动处理)
-log_info "Generating version info..."
+# 5. 生成版本信息
+log_info "Pre-generating version files..."
 mkdir -p utils
 echo "module utils.ldc_version_info_; enum LDC_VERSION_INFO = \"${PKG_VER}\";" > utils/ldc_version_info_.d
 echo "${PKG_VER}" > VERSION
 
 # 6. 设置库搜索路径 (D 运行时库 Phobos)
+# 这一步是链接成功的关键
 LDC_ROOT=$(dirname $(dirname "$LDC_ABS_PATH"))
 export LIBRARY_PATH="${LIBRARY_PATH}:${LDC_ROOT}/lib"
+log_info "LIBRARY_PATH updated with: ${LDC_ROOT}/lib"
 
 # 7. 根据平台准备参数
-# 这里的引向必须包含绝对路径的双引号，防止路径中有空格
 MAKE_OPTS="D_COMPILER=\"$LDC_ABS_PATH\" LDC2=\"$LDC_ABS_PATH\""
 
 case "${OS_TYPE}" in
@@ -70,7 +80,6 @@ case "${OS_TYPE}" in
         ;;
     "windows")
         BUILD_TARGET="release"
-        # Windows 下必须明确链接 zlib 和 lz4
         export LIBS="-L-lz -L-llz4"
         mkdir -p bin
         ;;
@@ -80,8 +89,7 @@ case "${OS_TYPE}" in
 esac
 
 # 8. 执行编译
-log_info "Running command: make ${BUILD_TARGET} ${MAKE_OPTS}"
-# 传递 BIOD_PATH 确保源码能被找到
+log_info "Executing: make ${BUILD_TARGET} ${MAKE_OPTS}"
 make -j${MAKE_JOBS} ${BUILD_TARGET} ${MAKE_OPTS} BIOD_PATH="./BioD:./BioD/contrib/msgpack-d/src"
 
 # 9. 整理产物
