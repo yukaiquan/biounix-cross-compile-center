@@ -105,11 +105,21 @@ jobs:
           echo "S_VER=${{ inputs.version }}" >> $GITHUB_ENV
           echo "OS_TYPE=${{ matrix.os-type }}" >> $GITHUB_ENV
           echo "ARCH_TYPE=${{ matrix.arch }}" >> $GITHUB_ENV
+          # --- 专门为 Sambamba 在 Windows 下寻找编译器 ---
+          if [ "${{ matrix.os-type }}" == "windows" ] && [ "${{ inputs.software }}" == "sambamba" ]; then
+             # setup-dlang 会设置 DC 变量，我们捕获它的绝对路径并转为 MSYS2 风格
+             LDC_RAW_PATH=$(which ldc2 || echo "$DC")
+             # 转换为 /c/ 这种格式
+             LDC_POSIX_PATH=$(cygpath -u "$LDC_RAW_PATH")
+             echo "LDC_FORCED_PATH=$LDC_POSIX_PATH" >> $GITHUB_ENV
+          fi
+
           if [ "${{ matrix.os-type }}" == "windows" ]; then
             echo "EXE_EXT=.exe" >> $GITHUB_ENV
           else
             echo "EXE_EXT=" >> $GITHUB_ENV
           fi
+
 
       - name: Install Dependencies
         run: bash scripts/install_deps.sh ${{ env.S_NAME }} ${{ env.S_VER }}
