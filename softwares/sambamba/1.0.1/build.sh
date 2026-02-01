@@ -9,7 +9,7 @@ source softwares/sambamba/1.0.1/source.env
 
 # 2. 进入源码
 cd "${SRC_PATH}"
-log_info "Building sambamba (Meson + Signal Patch) in: $(pwd)"
+log_info "Building sambamba (Meson Syntax Fix) in: $(pwd)"
 
 # 3. 准备 BioD
 if [ ! -d "BioD/bio" ]; then
@@ -20,7 +20,7 @@ if [ ! -d "BioD/bio" ]; then
     rm BioD_src.tar.gz
 fi
 
-# 4. 环境准备：锁定编译器
+# 4. 环境准备：锁定编译器 (必须配合 YAML 中的 path-type: inherit)
 if [ "$OS_TYPE" == "windows" ]; then
     LDC_POSIX_EXE=$(cat "${BASE_DIR}/ldc_full_path.txt" | tr -d '\r\n')
     LDC_BIN_DIR=$(dirname "$LDC_POSIX_EXE")
@@ -37,16 +37,16 @@ if [ "$OS_TYPE" == "windows" ]; then
     find BioD -name "*.d" -type f -exec sed -i 's/core.stdc.windows.windows/core.sys.windows.windows/g' {} +
 fi
 
-# 6. 【关键修复】源码手术 B：修复 Windows 缺失 SIGPIPE 的问题
+# 6. 【核心修复】源码手术 B：修复 Windows 缺失 SIGPIPE 的正确方式
 if [ "$OS_TYPE" == "windows" ]; then
-    log_info "Patching SIGPIPE for Windows compatibility..."
-    # 策略：在报错的 D 源码文件中手动定义一个假的 SIGPIPE 变量
-    # 这样代码可以编译通过，虽然在 Windows 上这个信号永远不会被触发
-    find sambamba -name "*.d" -type f -exec sed -i '1i version(Windows) { enum SIGPIPE = 13; }' {} +
+    log_info "Patching SIGPIPE correctly (after module declaration)..."
+    # 仅在报错的 pileup.d 中插入定义，且必须放在 module 声明之后
+    # /module /a 的意思是“在匹配到 module 的行之后追加”
+    sed -i '/module /a version(Windows) { enum SIGPIPE = 13; }' sambamba/pileup.d
 fi
 
-# 7. 手动创建完整的版本信息文件 (避开 Meson 内部 Python 路径 Bug)
-log_info "Manually creating ldc_version_info_.d..."
+# 7. 手动创建完整的版本信息文件
+log_info "Manually creating version file..."
 mkdir -p utils
 cat > utils/ldc_version_info_.d <<EOF
 module utils.ldc_version_info_;
@@ -62,7 +62,7 @@ if [ -f "meson.build" ]; then
     # 指向我们建好的版本文件
     sed -i "s|version_info_d_fname = .*|version_info_d_fname = files('utils/ldc_version_info_.d')|g" meson.build
     
-    # 移除会报错的 run_command 块
+    # 移除会报错的 run_command 块（适配 Windows 路径拼接 Bug）
     sed -i '/run_command(mkdir_prog/,/endif/d' meson.build
     sed -i "/run_command('python3'/,/endif/d" meson.build
 fi
@@ -74,6 +74,7 @@ meson setup build_dir --buildtype=release --strip
 
 # 10. 执行编译 (Ninja)
 log_info "Running Ninja..."
+# -v 开启详细模式，方便看到每一条编译指令
 ninja -v -C build_dir
 
 # 11. 整理产物
