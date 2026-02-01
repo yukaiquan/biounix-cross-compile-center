@@ -9,9 +9,9 @@ source softwares/sambamba/1.0.1/source.env
 
 # 2. 进入源码
 cd "${SRC_PATH}"
-log_info "Building sambamba via Makefile in: $(pwd)"
+log_info "Building sambamba in: $(pwd)"
 
-# 3. 准备 BioD (确保路径大小写正确)
+# 3. 准备 BioD
 if [ ! -d "BioD/bio" ]; then
     log_info "Fetching BioD library..."
     curl -L "${BIOD_URL}" -o BioD_src.tar.gz
@@ -20,46 +20,47 @@ if [ ! -d "BioD/bio" ]; then
     rm BioD_src.tar.gz
 fi
 
-# 4. 关键修复：预生成版本信息文件，绕过 Makefile 的 'which ldmd2' 报错
-log_info "Pre-generating version info to bypass Makefile error..."
+# 4. 智能探测 D 编译器
+# 优先使用 PATH 里的 ldc2，如果没有则尝试使用环境变量 DC
+LDC_BIN=$(which ldc2 2>/dev/null || echo "$DC")
+if [ -z "$LDC_BIN" ]; then
+    log_err "LDC2 compiler (ldc2) not found in PATH. Ensure 'path-type: inherit' is set in MSYS2 setup."
+fi
+log_info "Using D compiler: $LDC_BIN"
+
+# 5. 修复版本信息生成逻辑
+log_info "Generating version info..."
 mkdir -p utils
-# 尝试找到编译器路径，如果找不到则给个默认字符串
-COMPILER_PATH=$(which ldc2 || echo "ldc2")
-python3 ./gen_ldc_version_info.py "$COMPILER_PATH" > utils/ldc_version_info_.d || \
+# 如果 Python 脚本失败，则手动写入一个保底的版本文件
+python3 ./gen_ldc_version_info.py "$LDC_BIN" > utils/ldc_version_info_.d 2>/dev/null || \
 echo 'module utils.ldc_version_info_; enum LDC_VERSION_INFO = "1.0.1";' > utils/ldc_version_info_.d
 
-# 确保 VERSION 文件存在 (Makefile 需要)
+# 确保 VERSION 文件存在
 [[ ! -f "VERSION" ]] && echo "${PKG_VER}" > VERSION
 
-# 5. 设置编译环境变量
-# 告诉链接器去哪里找 D 运行时库（Phobos）
+# 6. 设置编译环境变量
+# 告诉链接器寻找 Phobos 运行时库
 export LIBRARY_PATH="${LIBRARY_PATH}:/usr/lib:/usr/local/lib"
 
-# 6. 根据平台准备参数
-# 强制指定编译器为 ldc2
-MAKE_OPTS="D_COMPILER=ldc2 LDC2=ldc2"
+# 7. 根据平台准备参数
+MAKE_OPTS="D_COMPILER=$LDC_BIN LDC2=$LDC_BIN"
 
 case "${OS_TYPE}" in
     "linux")
         log_info "Configuring for Linux Static..."
         BUILD_TARGET="static"
         if [ "${ARCH_TYPE}" == "arm64" ] && [[ "$(uname -m)" != "aarch64" ]]; then
-            log_info "Cross-compiling for ARM64..."
             export DFLAGS="-mtriple=aarch64-linux-gnu -gcc=aarch64-linux-gnu-gcc"
             export CC="aarch64-linux-gnu-gcc"
         fi
         ;;
-
     "windows")
         log_info "Configuring for Windows (MSYS2)..."
-        # Windows 下使用 release 目标更稳，ldc2 会自动处理静态链接
         BUILD_TARGET="release"
-        # 强制指定静态链接库
+        # 强制静态链接
         export LIBS="-L-lz -L-llz4"
-        # 修复 Makefile 可能生成的 bin/ 目录不存在问题
         mkdir -p bin
         ;;
-
     "macos")
         log_info "Configuring for macOS..."
         BUILD_TARGET="release"
@@ -67,23 +68,23 @@ case "${OS_TYPE}" in
         ;;
 esac
 
-# 7. 执行编译
-log_info "Running: make ${BUILD_TARGET} ${MAKE_OPTS}"
-# 传入 DFLAGS 确保包含 BioD 路径
+# 8. 执行编译
+log_info "Running make ${BUILD_TARGET}..."
+# 指定 BIOD_PATH 覆盖 Makefile 中的定义
 make -j${MAKE_JOBS} ${BUILD_TARGET} ${MAKE_OPTS} BIOD_PATH="./BioD:./BioD/contrib/msgpack-d/src"
 
-# 8. 整理产物
+# 9. 整理产物
 mkdir -p "${INSTALL_PREFIX}/bin"
-# Makefile 会生成类似 bin/sambamba-1.0.1 的文件
+# 查找编译出的二进制 (Makefile 生成的文件名通常带版本号)
 FOUND_BIN=$(find bin/ -name "sambamba*" -type f -executable | head -n 1)
 
 if [ -n "$FOUND_BIN" ]; then
     cp -f "${FOUND_BIN}" "${INSTALL_PREFIX}/bin/sambamba${EXE_EXT}"
-    log_info "Binary collected: sambamba${EXE_EXT}"
+    log_info "Binary collected: ${INSTALL_PREFIX}/bin/sambamba${EXE_EXT}"
 else
-    log_err "Build failed: could not find output binary in bin/"
+    log_err "Build failed: could not find output binary."
     exit 1
 fi
 
-# 9. 验证
+# 10. 验证
 file "${INSTALL_PREFIX}/bin/sambamba${EXE_EXT}" || true
