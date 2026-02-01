@@ -73,7 +73,8 @@ jobs:
 
     defaults:
       run:
-        shell: ${{ matrix.mshell || 'bash' }}
+        # shell: ${{ matrix.mshell || 'bash' }}
+        shell: bash
 
     steps:
       - name: Checkout Code
@@ -97,11 +98,12 @@ jobs:
         with:
           msystem: MINGW64
           update: true
-          install: base-devel mingw-w64-x86_64-gcc mingw-w64-x86_64-zlib
+          install: base-devel mingw-w64-x86_64-gcc mingw-w64-x86_64-zlib mingw-w64-x86_64-lz4
 
 
       # --- 关键改动 2: 变量透传，不再让脚本猜 OS 和 ARCH ---
       - name: Prepare Environment
+        shell: ${{ matrix.mshell }}
         run: |
           echo "S_NAME=${{ inputs.software }}" >> $GITHUB_ENV
           echo "S_VER=${{ inputs.version }}" >> $GITHUB_ENV
@@ -110,18 +112,23 @@ jobs:
           [ "${{ matrix.os-type }}" == "windows" ] && echo "EXE_EXT=.exe" >> $GITHUB_ENV || echo "EXE_EXT=" >> $GITHUB_ENV
 
       - name: Install Dependencies
+        shell: ${{ matrix.mshell }}
         run: bash scripts/install_deps.sh ${{ env.S_NAME }} ${{ env.S_VER }}
 
       - name: Fetch Source
+        shell: ${{ matrix.mshell }}
         run: |
           bash scripts/fetch_source.sh ${{ env.S_NAME }} ${{ env.S_VER }}
           [ -f "build_env.txt" ] && cat build_env.txt >> $GITHUB_ENV || true
 
       - name: Build
+        shell: ${{ matrix.mshell }}
         run: |
+          # 重新加载环境，确保变量生效
           source config/global.env
+          if [ -f build_env.txt ]; then source build_env.txt; fi
           bash softwares/${{ env.S_NAME }}/${{ env.S_VER }}/build.sh
-
+      
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
