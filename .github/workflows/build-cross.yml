@@ -94,6 +94,7 @@ jobs:
         with:
           msystem: MINGW64
           update: true
+          path_type: inherit
           install: >-
             base-devel mingw-w64-x86_64-gcc mingw-w64-x86_64-zlib 
             mingw-w64-x86_64-gcc-fortran mingw-w64-x86_64-openblas
