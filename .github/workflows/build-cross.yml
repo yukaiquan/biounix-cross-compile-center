@@ -79,6 +79,18 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Cleanup
+        run: |
+          rm -rf dist build sources build_env.txt
+          mkdir -p dist/bin
+
+        # --- 专门为 sambamba 准备 D 语言环境 ---
+      - name: Setup D Language (Sambamba only)
+        if: github.event.inputs.software == 'sambamba'
+        uses: dlang-community/setup-dlang@v1
+        with:
+          compiler: ldc-latest
+
       - name: Setup MSYS2 (Windows Only)
         if: matrix.os-type == 'windows'
         uses: msys2/setup-msys2@v2
@@ -86,6 +98,7 @@ jobs:
           msystem: MINGW64
           update: true
           install: base-devel mingw-w64-x86_64-gcc mingw-w64-x86_64-zlib
+
 
       # --- 关键改动 2: 变量透传，不再让脚本猜 OS 和 ARCH ---
       - name: Prepare Environment
