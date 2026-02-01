@@ -9,9 +9,9 @@ source softwares/sambamba/1.0.1/source.env
 
 # 2. 进入源码
 cd "${SRC_PATH}"
-log_info "Building sambamba (Safe Brute Force Mode) in: $(pwd)"
+log_info "Building sambamba using Meson in: $(pwd)"
 
-# 3. 准备 BioD
+# 3. 准备 BioD (必须命名为 BioD，大小写敏感)
 if [ ! -d "BioD/bio" ]; then
     log_info "Fetching BioD library..."
     curl -L "${BIOD_URL}" -o BioD_src.tar.gz
@@ -20,58 +20,43 @@ if [ ! -d "BioD/bio" ]; then
     rm BioD_src.tar.gz
 fi
 
-# 4. 获取编译器绝对路径
+# 4. 环境准备：告知 Meson 编译器位置
 if [ "$OS_TYPE" == "windows" ]; then
-    LDC_ABS_PATH=$(cat "${BASE_DIR}/ldc_full_path.txt" | tr -d '\r\n')
-    log_info "LDC2 Path: $LDC_ABS_PATH"
+    # 读取之前记录的绝对路径
+    LDC_RAW_PATH=$(cat "${BASE_DIR}/ldc_full_path.txt" | tr -d '\r\n')
+    # 转换为 Windows 原生路径供 Meson 使用
+    export DC=$(cygpath -w "$LDC_RAW_PATH")
+    log_info "Setting DC=$DC"
 else
-    LDC_ABS_PATH=$(which ldc2)
+    export DC=$(which ldc2)
 fi
 
-# 5. 源码手术
+# 5. 源码手术：修复 BioD 的 Windows 兼容性
 if [ "$OS_TYPE" == "windows" ]; then
-    log_info "Fixing BioD source code..."
+    log_info "Patching BioD for Windows..."
     find BioD -name "*.d" -type f -exec sed -i 's/core.stdc.windows.windows/core.sys.windows.windows/g' {} +
 fi
 
-# 6. 准备版本信息
-mkdir -p utils
-# 手动生成版本文件，确保模块名正确
-echo 'module utils.ldc_version_info_; enum LDC_VERSION_INFO = "'${PKG_VER}'";' > utils/ldc_version_info_.d
+# 6. 配置 Meson
+log_info "Configuring Meson..."
+rm -rf build_dir
+# --buildtype=release: 开启优化
+# --strip: 减小二进制体积
+meson setup build_dir --buildtype=release --strip
 
-# 7. 构造编译命令 (排除干扰项)
-log_info "Collecting source files (excluding non-source directories)..."
+# 7. 执行编译 (Ninja)
+log_info "Running Ninja..."
+ninja -C build_dir
 
-# 关键修复 1: -type f 排除文件夹。排除 etc, deb, test, doc 等干扰目录
-D_FILES=$(find . -maxdepth 4 -name "*.d" -type f | grep -vE "shunit2|etc/|deb/|doc/|test/|contrib/")
-
-# 关键修复 2: 显式加入必须的 D 源文件
-D_FILES="$D_FILES main.d utils/ldc_version_info_.d"
-
-# 设置包含路径
-INC_FLAGS="-I=. -IBioD -IBioD/contrib/msgpack-d/src -Ithirdparty"
-COMMON_OPTS="-O3 -release -enable-inlining -boundscheck=off"
-
-if [ "$OS_TYPE" == "windows" ]; then
-    LDFLAGS_OPTS="-L-lz -L-llz4"
-else
-    LDFLAGS_OPTS="-L-lz -L-llz4 -L-lpthread"
-fi
-
-# 8. 执行编译
-log_info "Starting LDC2 final compilation..."
-
-if [ "$OS_TYPE" == "windows" ]; then
-    # 注意：Windows 下 D 编译器对路径很挑剔，直接使用命令运行
-    "$LDC_ABS_PATH" $COMMON_OPTS $INC_FLAGS -of=bin/sambamba.exe $D_FILES $LDFLAGS_OPTS
-else
-    ldc2 $COMMON_OPTS $INC_FLAGS -of=bin/sambamba $D_FILES $LDFLAGS_OPTS
-fi
-
-# 9. 整理产物
+# 8. 整理产物
 mkdir -p "${INSTALL_PREFIX}/bin"
-if [ -f "bin/sambamba${EXE_EXT}" ]; then
-    cp -f bin/sambamba${EXE_EXT} "${INSTALL_PREFIX}/bin/"
-    log_info "SUCCESS: sambamba${EXE_EXT} created."
+if [ -f "build_dir/sambamba${EXE_EXT}" ]; then
+    cp -f "build_dir/sambamba${EXE_EXT}" "${INSTALL_PREFIX}/bin/"
+    log_info "SUCCESS: sambamba generated at ${INSTALL_PREFIX}/bin/"
 else
-    log_err "Binary not
+    log_err "Build failed: Binary not found in build_dir/"
+    exit 1
+fi
+
+# 9. 验证
+file "${INSTALL_PREFIX}/bin/sambamba${EXE_EXT}" || true
