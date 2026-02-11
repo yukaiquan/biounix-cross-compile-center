@@ -12,12 +12,13 @@ log_info "Building htslib Release in: $(pwd)"
 
 # 3. 初始化配置参数
 # htslib 默认配置，支持静态编译
+# 禁用 shared library，只编译静态库 + 可执行文件
 if [ "$OS_TYPE" == "macos" ]; then
     # macOS 使用动态链接（brew 已提供库）
-    CONF_FLAGS="--prefix=${INSTALL_PREFIX} --enable-libcurl"
+    CONF_FLAGS="--prefix=${INSTALL_PREFIX} --enable-libcurl --disable-shared"
 else
-    # Linux/Windows 尝试静态编译
-    CONF_FLAGS="--prefix=${INSTALL_PREFIX}"
+    # Linux/Windows 只编译静态库
+    CONF_FLAGS="--prefix=${INSTALL_PREFIX} --disable-shared"
 fi
 
 # 4. 平台特定优化
@@ -31,6 +32,14 @@ fi
 if [ "$OS_TYPE" == "windows" ]; then
     log_info "Applying Windows Static Flags..."
     export LDFLAGS="-static -static-libgcc -static-libstdc++"
+    # Windows 静态链接需要正则库支持
+    export LIBS="-ltre -lintl -liconv -lws2_32 -lbcrypt -lcrypt32 -lshlwapi -lpsapi -lpthread"
+    
+    # 检测 tre 库，没有则禁用正则
+    if ! pkg-config --exists tre 2>/dev/null; then
+        log_warn "libtre not found, disabling regex..."
+        CONF_FLAGS="${CONF_FLAGS} --disable-regex"
+    fi
 fi
 
 if [ "$OS_TYPE" == "linux" ]; then
