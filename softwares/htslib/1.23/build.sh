@@ -56,22 +56,39 @@ log_info "Configuring with: ${CONF_FLAGS}"
 autoreconf -i  # 首次需要生成 configure
 ./configure ${CONF_FLAGS} || { [ -f config.log ] && tail -n 50 config.log; exit 1; }
 
-# 6. 编译（禁用 shared library 编译）
+# 6. 编译（禁用 shared library）
 log_info "Building static library and binaries..."
 
-# 彻底禁用 shared library 构建
-# 删除 Makefile 中所有与 .so/.dylib 相关的目标
-sed -i '/^SHLIB\s*=/d' Makefile
-sed -i '/^SO\s*=/d' Makefile
-sed -i '/^SHOBJECTS\s*=/d' Makefile
-sed -i 's/-shared//g' Makefile
-sed -i 's/-Wl,-soname,libhts.so[^ ]* //g' Makefile
-
 # 只编译静态库和可执行文件
-make -j${MAKE_JOBS} lib-static 2>/dev/null || make -j${MAKE_JOBS} || true
+make -j${MAKE_JOBS} lib-static 2>/dev/null || true
+make -j${MAKE_JOBS} 2>/dev/null || true
 
-# 7. 安装
-make install
+# 7. 手动安装（避免 make install 触发 .so 构建）
+log_info "Installing artifacts..."
+mkdir -p "${INSTALL_PREFIX}/bin"
+mkdir -p "${INSTALL_PREFIX}/lib"
+mkdir -p "${INSTALL_PREFIX}/include/htslib"
+
+# 复制静态库
+if [ -f "libhts.a" ]; then
+    cp libhts.a "${INSTALL_PREFIX}/lib/"
+    log_info "Installed libhts.a"
+fi
+
+# 复制可执行文件
+for bin in annot-tsv bgzip htsfile tabix; do
+    if [ -f "$bin" ]; then
+        cp "$bin" "${INSTALL_PREFIX}/bin/"
+        log_info "Installed $bin"
+    fi
+done
+
+# 复制头文件
+for h in htslib/*.h; do
+    if [ -f "$h" ]; then
+        cp "$h" "${INSTALL_PREFIX}/include/htslib/"
+    fi
+done
 
 # 7. 验证
 FINAL_BIN="${INSTALL_PREFIX}/bin/htslib${EXE_EXT}"
