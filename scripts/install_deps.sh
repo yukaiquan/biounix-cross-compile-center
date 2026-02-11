@@ -31,16 +31,9 @@ case "$OS_TYPE" in
     sudo apt-get install -y $DEPS_APT
     if [ "${ARCH_TYPE}" == "arm64" ]; then
         log_info "Preparing ARM64 cross-compile environment..."
-        sudo dpkg --add-architecture arm64
-        sudo apt-get update
-        # 只安装必要的交叉编译工具和核心依赖，跳过可选依赖
-        sudo apt-get install -y \
-            gcc-aarch64-linux-gnu \
-            g++-aarch64-linux-gnu \
-            zlib1g-dev:arm64 \
-            libbz2-dev:arm64 \
-            liblzma-dev:arm64 \
-            || true  # 忽略可选依赖的安装失败
+        # 只安装交叉编译工具链，不添加 arm64 架构（避免 404 错误）
+        sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu || true
+        log_info "ARM64 cross-compile tools installed"
     else
         sudo apt-get install -y build-essential zlib1g-dev
     fi
