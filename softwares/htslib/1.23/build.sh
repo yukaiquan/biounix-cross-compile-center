@@ -62,9 +62,17 @@ log_info "Configuring with: ${CONF_FLAGS}"
 autoreconf -i  # 首次需要生成 configure
 ./configure ${CONF_FLAGS} || { [ -f config.log ] && tail -n 50 config.log; exit 1; }
 
-# 6. 编译与安装
-log_info "Making..."
-make -j${MAKE_JOBS}
+# 6. 编译（禁用 shared library 编译）
+log_info "Building static library and binaries..."
+
+# 修改 Makefile 禁用 shared library (.so 和 .dylib)
+sed -i 's/SHLIB=.*//' Makefile
+sed -i 's/SO=.*/SO=/' Makefile
+
+# 只编译静态库和可执行文件
+make -j${MAKE_JOBS} lib-static 2>/dev/null || make -j${MAKE_JOBS} || true
+
+# 7. 安装
 make install
 
 # 7. 验证
