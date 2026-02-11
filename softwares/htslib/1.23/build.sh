@@ -32,14 +32,8 @@ fi
 if [ "$OS_TYPE" == "windows" ]; then
     log_info "Applying Windows Static Flags..."
     export LDFLAGS="-static -static-libgcc -static-libstdc++"
-    # Windows 静态链接需要正则库支持
-    export LIBS="-ltre -lintl -liconv -lws2_32 -lbcrypt -lcrypt32 -lshlwapi -lpsapi -lpthread"
-    
-    # 检测 tre 库，没有则禁用正则
-    if ! pkg-config --exists tre 2>/dev/null; then
-        log_warn "libtre not found, disabling regex..."
-        CONF_FLAGS="${CONF_FLAGS} --disable-regex"
-    fi
+    # Windows MSYS2 没有 libtre，禁用正则功能
+    CONF_FLAGS="${CONF_FLAGS} --disable-regex"
 fi
 
 if [ "$OS_TYPE" == "linux" ]; then
