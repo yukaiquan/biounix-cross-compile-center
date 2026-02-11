@@ -43,7 +43,7 @@ if [ "$OS_TYPE" == "linux" ]; then
     if [ "${ARCH_TYPE}" == "arm64" ] && [[ "$(uname -m)" != "aarch64" && "$(uname -m)" != "arm64" ]]; then
         log_info "Cross-compiling for Linux ARM64..."
         export HOST_ALIAS="aarch64-linux-gnu"
-        CONF_FLAGS="${CONF_FLAGS} --host=${HOST_ALIAS}"
+        CONF_FLAGS="${CONF_FLAGS} --host=${HOST_ALIAS} --disable-bz2 --disable-lzma --disable-gcs --disable-s3 --disable-curl"
         export CC="${HOST_ALIAS}-gcc"
         export AR="${HOST_ALIAS}-ar"
         export RANLIB="${HOST_ALIAS}-ranlib"
