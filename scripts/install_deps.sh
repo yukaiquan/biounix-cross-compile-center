@@ -30,22 +30,9 @@ case "$OS_TYPE" in
     sudo apt-get update
     sudo apt-get install -y $DEPS_APT
     if [ "${ARCH_TYPE}" == "arm64" ]; then
-        log_info "Preparing ARM64 cross-compile environment..."
-        
-        # 添加 ARM64 架构（可能因网络问题失败，继续）
-        sudo dpkg --add-architecture arm64 2>/dev/null || true
-        sudo apt-get update 2>/dev/null || true
-        
-        # 安装 ARM64 依赖库（可能部分失败，不影响编译）
-        sudo apt-get install -y \
-            zlib1g-dev:arm64 \
-            libbz2-dev:arm64 \
-            liblzma-dev:arm64 \
-            || log_warn "Some ARM64 libs may not be available, continuing..."
-        
-        # 安装交叉编译工具链
-        sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu || true
-        log_info "ARM64 environment prepared"
+        log_info "Installing native ARM64 dependencies..."
+        # 原生 ARM64 直接安装依赖
+        sudo apt-get install -y zlib1g-dev libbz2-dev liblzma-dev || true
     else
         sudo apt-get install -y build-essential zlib1g-dev
     fi

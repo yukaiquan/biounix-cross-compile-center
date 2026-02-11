@@ -55,7 +55,11 @@ if [ "$OS_TYPE" == "linux" ]; then
     log_info "Applying Linux Static Flags..."
     export LDFLAGS="-static"
     
-    if [ "${ARCH_TYPE}" == "arm64" ] && [[ "$(uname -m)" != "aarch64" && "$(uname -m)" != "arm64" ]]; then
+    # 原生 ARM64 不需要交叉编译
+    if [ "${ARCH_TYPE}" == "arm64" ]; then
+        log_info "Native ARM64 build"
+    # 交叉编译（仅当架构不匹配时）
+    elif [[ "$(uname -m)" != "aarch64" && "$(uname -m)" != "arm64" ]]; then
         log_info "Cross-compiling for Linux ARM64..."
         export HOST_ALIAS="aarch64-linux-gnu"
         CONF_FLAGS="${CONF_FLAGS} --host=${HOST_ALIAS}"
