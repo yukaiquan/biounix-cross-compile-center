@@ -59,9 +59,13 @@ autoreconf -i  # 首次需要生成 configure
 # 6. 编译（禁用 shared library 编译）
 log_info "Building static library and binaries..."
 
-# 修改 Makefile 禁用 shared library (.so 和 .dylib)
-sed -i 's/SHLIB=.*//' Makefile
-sed -i 's/SO=.*/SO=/' Makefile
+# 彻底禁用 shared library 构建
+# 删除 Makefile 中所有与 .so/.dylib 相关的目标
+sed -i '/^SHLIB\s*=/d' Makefile
+sed -i '/^SO\s*=/d' Makefile
+sed -i '/^SHOBJECTS\s*=/d' Makefile
+sed -i 's/-shared//g' Makefile
+sed -i 's/-Wl,-soname,libhts.so[^ ]* //g' Makefile
 
 # 只编译静态库和可执行文件
 make -j${MAKE_JOBS} lib-static 2>/dev/null || make -j${MAKE_JOBS} || true
