@@ -45,7 +45,7 @@ jobs:
               {"id": "linux-x64",   "os-type": "linux",   "arch": "x64",   "runner": "ubuntu-latest",  "mshell": "bash"},
               {"id": "linux-arm64", "os-type": "linux",   "arch": "arm64", "runner": "ubuntu-latest",  "mshell": "bash"},
               {"id": "macos-arm64", "os-type": "macos",   "arch": "arm64", "runner": "macos-latest",   "mshell": "bash"},
-              {"id": "macos-x64",   "os-type": "macos",   "arch": "x64",   "runner": "macos-13",       "mshell": "bash"},
+              {"id": "macos-x64",   "os-type": "macos",   "arch": "x64",   "runner": "macos-latest",   "mshell": "bash"},
               {"id": "windows-x64", "os-type": "windows", "arch": "x64",   "runner": "windows-latest", "mshell": "msys2 {0}"}
             ]
           }'
