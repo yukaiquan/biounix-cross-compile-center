@@ -90,6 +90,15 @@ for h in htslib/*.h; do
     fi
 done
 
+# 复制并修改 pkg-config 文件，确保静态链接
+mkdir -p "${INSTALL_PREFIX}/lib/pkgconfig"
+if [ -f "htslib.pc.tmp" ]; then
+    cp htslib.pc.tmp "${INSTALL_PREFIX}/lib/pkgconfig/htslib.pc"
+    # 修改 .pc 文件，确保 Libs 是静态链接
+    sed -i 's/-lhts.*/-lhts -lpthread -lz -lm -lbz2 -llzma/' "${INSTALL_PREFIX}/lib/pkgconfig/htslib.pc"
+    log_info "Installed htslib.pc"
+fi
+
 # 7. 验证
 FINAL_BIN="${INSTALL_PREFIX}/bin/htslib${EXE_EXT}"
 if [ -f "$FINAL_BIN" ] || [ -f "${INSTALL_PREFIX}/lib/libhts.a" ]; then

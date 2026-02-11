@@ -13,12 +13,27 @@ log_info "Building samtools Release in: $(pwd)"
 # 3. 初始化配置参数
 # --without-curses: 禁用 tview，解决全平台 curses 报错问题，实现全静态编译
 # --disable-libcurl: 禁用网络功能，确保 Windows/Linux 静态单文件兼容性
-if [ "$OS_TYPE" == "macos" ]; then
-    # macOS 保持 libcurl 开启（动态链接），禁用 curses
-    CONF_FLAGS="--prefix=${INSTALL_PREFIX} --enable-libcurl --without-curses"
+# --with-htslib=local: 使用本地静态编译的 htslib
+
+# 查找本地 htslib
+HTSLIB_PATH="${BUILD_DIR}/htslib-${HTSLIB_VER:-1.23}"
+
+if [ -d "$HTSLIB_PATH" ]; then
+    log_info "Using local htslib from: $HTSLIB_PATH"
+    CONF_FLAGS="--prefix=${INSTALL_PREFIX} --with-htslib=${HTSLIB_PATH} --without-curses"
+    # 添加 pkg-config 路径
+    export PKG_CONFIG_PATH="${HTSLIB_PATH}/lib/pkgconfig:${PKG_CONFIG_PATH}"
+    log_info "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
 else
-    # Linux/Windows 禁用 libcurl 和 curses，确保 100% 静态编译成功
-    CONF_FLAGS="--prefix=${INSTALL_PREFIX} --disable-libcurl --without-curses"
+    log_warn "Local htslib not found, using system htslib"
+    CONF_FLAGS="--prefix=${INSTALL_PREFIX} --without-curses"
+fi
+
+# 平台特定配置
+if [ "$OS_TYPE" == "macos" ]; then
+    CONF_FLAGS="${CONF_FLAGS} --enable-libcurl"
+else
+    CONF_FLAGS="${CONF_FLAGS} --disable-libcurl"
 fi
 
 # 4. 平台特定优化
