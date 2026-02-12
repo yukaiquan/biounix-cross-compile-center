@@ -8,7 +8,7 @@ source config/platform.env
 
 # 2. 进入源码
 cd "${SRC_PATH}"
-log_info "Building rmdups in: $(pwd)"
+log_info "Building rmduprs in: $(pwd)"
 log_info "Source directory contents:"
 ls -la
 
@@ -23,7 +23,7 @@ RUST_VERSION=$(rustc --version | awk '{print $2}')
 log_info "Rust version: $RUST_VERSION"
 
 # 4. Rust 静态编译
-log_info "Building rmdups Release..."
+log_info "Building rmduprs Release..."
 
 # 设置静态链接标志
 export RUSTFLAGS="-C target-feature=+crt-static"
@@ -54,7 +54,7 @@ elif [ "$OS_TYPE" == "windows" ]; then
 fi
 
 # 5. 验证
-FINAL_BIN="${INSTALL_PREFIX}/bin/rmdups${EXE_EXT}"
+FINAL_BIN="${INSTALL_PREFIX}/bin/rmduprs${EXE_EXT}"
 if [ -f "$FINAL_BIN" ]; then
     log_info "Build successful!"
     log_info "Binary info:"
