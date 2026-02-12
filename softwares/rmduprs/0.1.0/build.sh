@@ -12,17 +12,37 @@ log_info "Building rmduprs in: $(pwd)"
 log_info "Source directory contents:"
 ls -la
 
-# 3. 安装/升级 Rust 工具链（需要 edition 2024）
+# 3. 设置 Rust 环境
+log_info "Setting up Rust environment..."
+
+if [ "$OS_TYPE" == "windows" ]; then
+    # Windows MSYS2 特殊处理
+    export RUSTUP_HOME="/c/Users/runneradmin/.rustup"
+    export CARGO_HOME="/c/Users/runneradmin/.cargo"
+    export PATH="$CARGO_HOME/bin:$PATH"
+    export CC="gcc"
+    export CXX="g++"
+    log_info "Windows Rust path: $CARGO_HOME/bin"
+else
+    source "$HOME/.cargo/env" 2>/dev/null || true
+fi
+
+# 4. 安装/升级 Rust 工具链
 log_info "Installing/updating Rust..."
-rustup install stable
-rustup default stable
-rustup update stable
+rustup install stable 2>/dev/null || true
+rustup default stable 2>/dev/null || true
+rustup update stable 2>/dev/null || true
 
 # 检查 Rust 版本
-RUST_VERSION=$(rustc --version | awk '{print $2}')
-log_info "Rust version: $RUST_VERSION"
+RUST_VERSION=$(rustc --version 2>/dev/null | awk '{print $2}')
+if [ -n "$RUST_VERSION" ]; then
+    log_info "Rust version: $RUST_VERSION"
+else
+    log_err "Rust not found in PATH"
+    exit 1
+fi
 
-# 4. Rust 静态编译
+# 5. Rust 静态编译
 log_info "Building rmduprs Release..."
 
 # 设置静态链接标志
@@ -53,7 +73,7 @@ elif [ "$OS_TYPE" == "windows" ]; then
     cp target/x86_64-pc-windows-gnu/release/rmduprs.exe "${INSTALL_PREFIX}/bin/"
 fi
 
-# 5. 验证
+# 6. 验证
 FINAL_BIN="${INSTALL_PREFIX}/bin/rmduprs${EXE_EXT}"
 if [ -f "$FINAL_BIN" ]; then
     log_info "Build successful!"
