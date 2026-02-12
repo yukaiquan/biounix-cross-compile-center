@@ -34,23 +34,23 @@ if [ "$OS_TYPE" == "linux" ]; then
         # ARM64 静态编译
         cargo build --release --target aarch64-unknown-linux-gnu
         mkdir -p "${INSTALL_PREFIX}/bin"
-        cp target/aarch64-unknown-linux-gnu/release/rmdups "${INSTALL_PREFIX}/bin/"
+        cp target/aarch64-unknown-linux-gnu/release/rmduprs "${INSTALL_PREFIX}/bin/"
     else
         # x86_64 静态编译
         cargo build --release --target x86_64-unknown-linux-gnu
         mkdir -p "${INSTALL_PREFIX}/bin"
-        cp target/x86_64-unknown-linux-gnu/release/rmdups "${INSTALL_PREFIX}/bin/"
+        cp target/x86_64-unknown-linux-gnu/release/rmduprs "${INSTALL_PREFIX}/bin/"
     fi
 elif [ "$OS_TYPE" == "macos" ]; then
-    # macOS 编译（动态链接，静态编译复杂）
+    # macOS 编译
     cargo build --release
     mkdir -p "${INSTALL_PREFIX}/bin"
-    cp target/release/rmdups "${INSTALL_PREFIX}/bin/"
+    cp target/release/rmduprs "${INSTALL_PREFIX}/bin/"
 elif [ "$OS_TYPE" == "windows" ]; then
     # Windows 编译
     cargo build --release --target x86_64-pc-windows-gnu
     mkdir -p "${INSTALL_PREFIX}/bin"
-    cp target/x86_64-pc-windows-gnu/release/rmdups.exe "${INSTALL_PREFIX}/bin/"
+    cp target/x86_64-pc-windows-gnu/release/rmduprs.exe "${INSTALL_PREFIX}/bin/"
 fi
 
 # 5. 验证
