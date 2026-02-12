@@ -70,7 +70,7 @@ case "$OS_TYPE" in
         log_info "Installing Rust toolchain..."
         export RUSTUP_HOME="/c/Users/runneradmin/.rustup"
         export CARGO_HOME="/c/Users/runneradmin/.cargo"
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+        curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
         source "$CARGO_HOME/env"
         rustup default stable
     fi
