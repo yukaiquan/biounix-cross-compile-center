@@ -12,7 +12,17 @@ log_info "Building rmdups in: $(pwd)"
 log_info "Source directory contents:"
 ls -la
 
-# 3. Rust 静态编译
+# 3. 安装/升级 Rust 工具链（需要 edition 2024）
+log_info "Installing/updating Rust..."
+rustup install stable
+rustup default stable
+rustup update stable
+
+# 检查 Rust 版本
+RUST_VERSION=$(rustc --version | awk '{print $2}')
+log_info "Rust version: $RUST_VERSION"
+
+# 4. Rust 静态编译
 log_info "Building rmdups Release..."
 
 # 设置静态链接标志
@@ -43,7 +53,7 @@ elif [ "$OS_TYPE" == "windows" ]; then
     cp target/x86_64-pc-windows-gnu/release/rmdups.exe "${INSTALL_PREFIX}/bin/"
 fi
 
-# 4. 验证
+# 5. 验证
 FINAL_BIN="${INSTALL_PREFIX}/bin/rmdups${EXE_EXT}"
 if [ -f "$FINAL_BIN" ]; then
     log_info "Build successful!"

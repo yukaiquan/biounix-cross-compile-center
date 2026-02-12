@@ -36,12 +36,28 @@ case "$OS_TYPE" in
     else
         sudo apt-get install -y build-essential zlib1g-dev
     fi
+    
+    # 安装/升级 Rust 工具链（如果需要）
+    if [ -n "$RUSTUP_INSTALL" ]; then
+        log_info "Installing/upgrading Rust toolchain..."
+        $RUSTUP_INSTALL
+        source "$HOME/.cargo/env"
+        rustup default stable
+    fi
     ;;
   macos)
     brew update
     brew install zlib
     brew install $DEPS_BREW
     echo "/opt/homebrew/bin:/usr/local/bin" >> $GITHUB_PATH
+    
+    # 安装/升级 Rust 工具链（如果需要）
+    if [ -n "$RUSTUP_INSTALL" ]; then
+        log_info "Installing/upgrading Rust toolchain..."
+        $RUSTUP_INSTALL
+        source "$HOME/.cargo/env"
+        rustup default stable
+    fi
     ;;
   windows)
     # pacman -S --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-zlib
@@ -56,5 +72,15 @@ case "$OS_TYPE" in
     for i in {1..3}; do
         pacman -S --noconfirm --needed $DEPS_MSYS2 && break || sleep 5
     done
+    
+    # 安装/升级 Rust 工具链（如果需要）
+    if [ -n "$RUSTUP_INSTALL" ]; then
+        log_info "Installing/upgrading Rust toolchain..."
+        export RUSTUP_HOME="/c/Users/runneradmin/.rustup"
+        export CARGO_HOME="/c/Users/runneradmin/.cargo"
+        $RUSTUP_INSTALL --default-toolchain stable
+        source "$CARGO_HOME/env"
+        rustup default stable
+    fi
     ;;
 esac
