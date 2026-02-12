@@ -71,12 +71,8 @@ case "$OS_TYPE" in
         export RUSTUP_HOME="/c/Users/runneradmin/.rustup"
         export CARGO_HOME="/c/Users/runneradmin/.cargo"
         curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-        # Windows 需要使用正确的路径格式
-        if [ -f "/c/Users/runneradmin/.cargo/env" ]; then
-            source "/c/Users/runneradmin/.cargo/env"
-        elif [ -f "$HOME/.cargo/env" ]; then
-            source "$HOME/.cargo/env"
-        fi
+        # rustup 已自动配置 PATH，不需要手动 source env
+        export PATH="$CARGO_HOME/bin:$PATH"
         rustup default stable
     fi
     ;;
