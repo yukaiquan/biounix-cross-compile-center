@@ -37,7 +37,7 @@ case "$OS_TYPE" in
     # 安装 Rust 工具链
     if [ "$NEED_RUSTUP" == "yes" ]; then
         log_info "Installing Rust toolchain..."
-        curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+        curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
         source "$HOME/.cargo/env"
         rustup default stable
     fi
