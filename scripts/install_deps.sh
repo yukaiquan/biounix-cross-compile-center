@@ -2,7 +2,6 @@
 set -e
 
 # --- 关键修复：加载配置和工具函数 ---
-# 这样脚本内部才能识别 log_info
 source config/global.env
 source config/platform.env
 if [ -f "scripts/utils.sh" ]; then
@@ -17,7 +16,6 @@ DEPS_FILE="softwares/${SOFT_NAME}/${SOFT_VER}/deps.env"
 if [ -f "$DEPS_FILE" ]; then
     source "$DEPS_FILE"
 else
-    # 如果没定义，设置默认值防止变量为空
     DEPS_APT="build-essential zlib1g-dev"
     DEPS_BREW="zlib"
     DEPS_MSYS2="mingw-w64-x86_64-gcc mingw-w64-x86_64-zlib"
@@ -31,16 +29,15 @@ case "$OS_TYPE" in
     sudo apt-get install -y $DEPS_APT
     if [ "${ARCH_TYPE}" == "arm64" ]; then
         log_info "Installing native ARM64 dependencies..."
-        # 原生 ARM64 直接安装依赖
         sudo apt-get install -y zlib1g-dev libbz2-dev liblzma-dev || true
     else
         sudo apt-get install -y build-essential zlib1g-dev
     fi
     
-    # 安装/升级 Rust 工具链（如果需要）
-    if [ -n "$RUSTUP_INSTALL" ]; then
-        log_info "Installing/upgrading Rust toolchain..."
-        $RUSTUP_INSTALL
+    # 安装 Rust 工具链
+    if [ "$NEED_RUSTUP" == "yes" ]; then
+        log_info "Installing Rust toolchain..."
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
         source "$HOME/.cargo/env"
         rustup default stable
     fi
@@ -51,34 +48,29 @@ case "$OS_TYPE" in
     brew install $DEPS_BREW
     echo "/opt/homebrew/bin:/usr/local/bin" >> $GITHUB_PATH
     
-    # 安装/升级 Rust 工具链（如果需要）
-    if [ -n "$RUSTUP_INSTALL" ]; then
-        log_info "Installing/upgrading Rust toolchain..."
-        $RUSTUP_INSTALL
+    # 安装 Rust 工具链
+    if [ "$NEED_RUSTUP" == "yes" ]; then
+        log_info "Installing Rust toolchain..."
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
         source "$HOME/.cargo/env"
         rustup default stable
     fi
     ;;
   windows)
-    # pacman -S --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-zlib
     log_info "Updating MSYS2 database..."
-    # --noconfirm: 不询问
-    # --needed: 如果已经安装了就跳过
-    # --disable-download-timeout: 尝试缓解网络慢的问题
     pacman -Sy --noconfirm
 
     log_info "Installing: $DEPS_MSYS2"
-    # 核心修改：使用多次尝试下载，防止单次超时
     for i in {1..3}; do
         pacman -S --noconfirm --needed $DEPS_MSYS2 && break || sleep 5
     done
     
-    # 安装/升级 Rust 工具链（如果需要）
-    if [ -n "$RUSTUP_INSTALL" ]; then
-        log_info "Installing/upgrading Rust toolchain..."
+    # 安装 Rust 工具链
+    if [ "$NEED_RUSTUP" == "yes" ]; then
+        log_info "Installing Rust toolchain..."
         export RUSTUP_HOME="/c/Users/runneradmin/.rustup"
         export CARGO_HOME="/c/Users/runneradmin/.cargo"
-        $RUSTUP_INSTALL --default-toolchain stable
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
         source "$CARGO_HOME/env"
         rustup default stable
     fi
