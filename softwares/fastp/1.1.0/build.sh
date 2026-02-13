@@ -20,7 +20,7 @@ if [ "$OS_TYPE" == "linux" ]; then
         log_info "Installing isa-l..."
         cd /tmp
         rm -rf isa-l
-        git clone https://github.com/intel/isa-l.git
+        git clone https://github.com/intel/isa-l.git --depth 1
         cd isa-l
         ./autogen.sh
         ./configure --prefix=/usr --libdir=/usr/lib64
@@ -36,7 +36,7 @@ if [ "$OS_TYPE" == "linux" ]; then
         log_info "Installing libdeflate..."
         cd /tmp
         rm -rf libdeflate
-        git clone https://github.com/ebiggers/libdeflate.git
+        git clone https://github.com/ebiggers/libdeflate.git --depth 1
         cd libdeflate
         cmake -B build -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64
         cmake --build build
@@ -56,20 +56,32 @@ if [ "$OS_TYPE" == "linux" ]; then
     export ENABLE_STATIC=1
 
 elif [ "$OS_TYPE" == "macos" ]; then
-    # macOS 使用 brew 安装依赖
+    # macOS 安装依赖
     log_info "Installing dependencies via brew..."
-    brew install libdeflate isa-l || true
+    brew install libdeflate || true
+    
+    # isa-l 在 brew 中可能不存在，从源码编译
+    if [ ! -f "/usr/local/lib/liblisal.a" ] && [ ! -f "/opt/homebrew/lib/liblisal.a" ]; then
+        log_info "Installing isa-l from source..."
+        cd /tmp
+        rm -rf isa-l
+        git clone https://github.com/intel/isa-l.git --depth 1
+        cd isa-l
+        ./autogen.sh
+        ./configure --prefix=/usr/local
+        make -j${MAKE_JOBS}
+        sudo make install
+    fi
     
     # 设置编译环境变量
     export CC="clang"
     export CXX="clang++"
     export CFLAGS="-O2"
     export CXXFLAGS="-O2"
-    export LDFLAGS=""
-    # 设置库路径
-    export LIBDEFLATE_PREFIX=$(brew --prefix libdeflate)
-    export ISAL_PREFIX=$(brew --prefix isa-l)
-    export LDFLAGS="-L$LIBDEFLATE/lib -L$ISAL/lib"
+    # 查找库路径
+    LIBDEFLATE_LIB=$(brew --prefix libdeflate)/lib 2>/dev/null || echo "/usr/local/lib"
+    ISAL_LIB=$(brew --prefix isa-l)/lib 2>/dev/null || echo "/usr/local/lib"
+    export LDFLAGS="-L$LIBDEFLATE_LIB -L$ISAL_LIB"
 
 elif [ "$OS_TYPE" == "windows" ]; then
     export RUSTUP_HOME="/c/Users/runneradmin/.rustup"
