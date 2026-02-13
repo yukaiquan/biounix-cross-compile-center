@@ -56,11 +56,20 @@ if [ "$OS_TYPE" == "linux" ]; then
     export ENABLE_STATIC=1
 
 elif [ "$OS_TYPE" == "macos" ]; then
+    # macOS 使用 brew 安装依赖
+    log_info "Installing dependencies via brew..."
+    brew install libdeflate isa-l || true
+    
+    # 设置编译环境变量
     export CC="clang"
     export CXX="clang++"
-    export CFLAGS="-O2 -s"
-    export CXXFLAGS="-O2 -s"
+    export CFLAGS="-O2"
+    export CXXFLAGS="-O2"
     export LDFLAGS=""
+    # 设置库路径
+    export LIBDEFLATE_PREFIX=$(brew --prefix libdeflate)
+    export ISAL_PREFIX=$(brew --prefix isa-l)
+    export LDFLAGS="-L$LIBDEFLATE/lib -L$ISAL/lib"
 
 elif [ "$OS_TYPE" == "windows" ]; then
     export RUSTUP_HOME="/c/Users/runneradmin/.rustup"
@@ -76,10 +85,14 @@ fi
 cd "${SRC_PATH}"
 log_info "Building fastp..."
 
+# 清理旧产物
+make clean || true
+
 if [ "$OS_TYPE" == "linux" ]; then
     # Linux 静态编译
     make -j${MAKE_JOBS} CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS"
 elif [ "$OS_TYPE" == "macos" ]; then
+    # macOS 编译
     make -j${MAKE_JOBS}
 elif [ "$OS_TYPE" == "windows" ]; then
     make -j${MAKE_JOBS}
