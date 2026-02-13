@@ -32,7 +32,7 @@ if [ "$OS_TYPE" == "linux" ]; then
     fi
 
     # 安装 libdeflate
-    if [ ! -f "/usr/lib64/libdeflate.a" ] && [ ! -f "/usr/lib/libdeflate.a" ]; then
+    if [ ! -f "/usr/lib64/libdeflate.a" ] && [ ! -f "/usr/lib/libdeflate.a" ] && [ ! -f "/usr/lib64/libdeflate.so" ]; then
         log_info "Installing libdeflate..."
         cd /tmp
         rm -rf libdeflate
@@ -43,7 +43,7 @@ if [ "$OS_TYPE" == "linux" ]; then
         sudo cmake --install build
         sudo ldconfig
     else
-        log_info "libdeflate already installed"
+        log_info "libdeflate already installed or using system package"
     fi
 
     # 设置编译环境变量
