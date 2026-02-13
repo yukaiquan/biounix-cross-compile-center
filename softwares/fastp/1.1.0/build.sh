@@ -15,6 +15,11 @@ ls -la
 log_info "Installing build dependencies..."
 
 if [ "$OS_TYPE" == "linux" ]; then
+    # 安装基础依赖
+    sudo apt-get update -qq
+    sudo apt-get install -y build-essential cmake nasm yasm zlib1g-dev git \
+        autoconf automake libtool pkg-config help2man libdeflate-dev || true
+    
     # 安装 isa-l (Intel Storage Acceleration Library)
     if [ ! -f "/usr/lib64/liblisal.a" ]; then
         log_info "Installing isa-l..."
@@ -27,25 +32,8 @@ if [ "$OS_TYPE" == "linux" ]; then
         make -j${MAKE_JOBS}
         sudo make install
         sudo ldconfig
-        ls -la /usr/lib64/liblisal.a || echo "Static lib not found"
     else
         log_info "isa-l already installed"
-    fi
-
-    # 安装 libdeflate (使用 apt)
-    if ! dpkg -l libdeflate-dev >/dev/null 2>&1; then
-        log_info "Installing libdeflate..."
-        cd /tmp
-        rm -rf libdeflate
-        git clone https://github.com/ebiggers/libdeflate.git --depth 1
-        cd libdeflate
-        cmake -B build -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64 -DBUILD_SHARED_LIBS=OFF
-        cmake --build build
-        sudo cmake --install build
-        sudo ldconfig
-        ls -la /usr/lib64/libdeflate.a || echo "Static lib not found"
-    else
-        log_info "libdeflate-dev already installed via apt"
     fi
 
     # 设置编译环境变量
@@ -54,7 +42,7 @@ if [ "$OS_TYPE" == "linux" ]; then
     export CFLAGS="-O2 -static -s"
     export CXXFLAGS="-O2 -static -s"
     export LDFLAGS="-static -L/usr/lib64"
-    export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:$PKG_CONFIG_PATH"
+    export LIBRARY_DIRS="/usr/lib64"
 
 elif [ "$OS_TYPE" == "macos" ]; then
     # macOS 安装依赖
@@ -77,6 +65,8 @@ elif [ "$OS_TYPE" == "macos" ]; then
         ./configure --prefix=/usr/local --enable-static
         make -j${MAKE_JOBS}
         sudo make install
+    else
+        log_info "isa-l already installed"
     fi
     
     # 设置编译环境变量
@@ -87,7 +77,7 @@ elif [ "$OS_TYPE" == "macos" ]; then
     # 查找库路径
     LIBDEFLATE_LIB=$(brew --prefix libdeflate)/lib 2>/dev/null || echo "/usr/local/lib"
     ISAL_LIB=$(brew --prefix isa-l)/lib 2>/dev/null || echo "/usr/local/lib"
-    export LDFLAGS="-L$LIBDEFLATE_LIB -L$ISAL_LIB"
+    export LIBRARY_DIRS="$LIBDEFLATE_LIB $ISAL_LIB"
 
 elif [ "$OS_TYPE" == "windows" ]; then
     # Windows MSYS2 安装依赖
@@ -95,40 +85,50 @@ elif [ "$OS_TYPE" == "windows" ]; then
     export CARGO_HOME="/c/Users/runneradmin/.cargo"
     export PATH="$CARGO_HOME/bin:$PATH"
     
+    # 使用 pacman 安装基础依赖
+    pacman -Sy --noconfirm base-devel cmake nasm yasm mingw-w64-x86_64-zlib \
+        git autoconf automake libtool || true
+    
     # 安装 isa-l (需要 MinGW 版本)
-    log_info "Installing isa-l..."
-    cd /tmp
-    rm -rf isa-l
-    git clone https://github.com/intel/isa-l.git --depth 1
-    cd isa-l
-    # 使用 MinGW 配置，静态库
-    CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++ ./autogen.sh
-    ./configure --prefix=/mingw64 --libdir=/mingw64/lib --host=x86_64-w64-mingw32 --enable-static
-    make -j${MAKE_JOBS}
-    make install
+    if [ ! -f "/mingw64/lib/liblisal.a" ]; then
+        log_info "Installing isa-l..."
+        cd /tmp
+        rm -rf isa-l
+        git clone https://github.com/intel/isa-l.git --depth 1
+        cd isa-l
+        CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++ ./autogen.sh
+        ./configure --prefix=/mingw64 --libdir=/mingw64/lib --host=x86_64-w64-mingw32 --enable-static
+        make -j${MAKE_JOBS}
+        make install
+    else
+        log_info "isa-l already installed"
+    fi
     
     # 安装 libdeflate (MinGW 版本)
-    log_info "Installing libdeflate..."
-    cd /tmp
-    rm -rf libdeflate
-    git clone https://github.com/ebiggers/libdeflate.git --depth 1
-    cd libdeflate
-    cmake -B build \
-        -DCMAKE_INSTALL_PREFIX=/mingw64 \
-        -DCMAKE_INSTALL_LIBDIR=/mingw64/lib \
-        -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
-        -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
-        -DBUILD_SHARED_LIBS=OFF
-    cmake --build build
-    cmake --install build
+    if [ ! -f "/mingw64/lib/libdeflate.a" ]; then
+        log_info "Installing libdeflate..."
+        cd /tmp
+        rm -rf libdeflate
+        git clone https://github.com/ebiggers/libdeflate.git --depth 1
+        cd libdeflate
+        cmake -B build \
+            -DCMAKE_INSTALL_PREFIX=/mingw64 \
+            -DCMAKE_INSTALL_LIBDIR=/mingw64/lib \
+            -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+            -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+            -DBUILD_SHARED_LIBS=OFF
+        cmake --build build
+        cmake --install build
+    else
+        log_info "libdeflate already installed"
+    fi
     
     # 设置编译环境变量
     export CC="x86_64-w64-mingw32-gcc"
     export CXX="x86_64-w64-mingw32-g++"
     export CFLAGS="-O2"
     export CXXFLAGS="-O2"
-    export LDFLAGS="-L/mingw64/lib"
-    export PKG_CONFIG_PATH="/mingw64/lib/pkgconfig:$PKG_CONFIG_PATH"
+    export LIBRARY_DIRS="/mingw64/lib"
 fi
 
 # 4. 返回源码目录构建 fastp
@@ -139,13 +139,13 @@ log_info "Building fastp..."
 make clean || true
 
 if [ "$OS_TYPE" == "linux" ]; then
-    # Linux 静态编译 - 使用 pkg-config 获取正确的链接标志
-    PKG_CONFIG_PATH="/usr/lib64/pkgconfig:$PKG_CONFIG_PATH" \
-    LIBS="-lisal -ldeflate -lpthread" \
-    make -j${MAKE_JOBS} CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LDFLAGS="-static"
+    # Linux 静态编译
+    make static -j${MAKE_JOBS}
 elif [ "$OS_TYPE" == "macos" ]; then
+    # macOS 编译 (动态链接，静态链接在 macOS 很复杂)
     make -j${MAKE_JOBS}
 elif [ "$OS_TYPE" == "windows" ]; then
+    # Windows 编译 (MinGW)
     make -j${MAKE_JOBS}
 fi
 
