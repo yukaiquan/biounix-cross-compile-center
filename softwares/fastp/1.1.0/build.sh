@@ -40,7 +40,7 @@ elif [ "$OS_TYPE" == "windows" ]; then
         git autoconf automake libtool || true
 fi
 
-# 4. 安装 isa-l 和 libdeflate 静态库
+# 4. 安装静态库
 log_info "Installing static libraries..."
 
 if [ "$OS_TYPE" == "linux" ]; then
@@ -58,8 +58,6 @@ if [ "$OS_TYPE" == "linux" ]; then
         sudo ldconfig
     fi
     
-    # Linux: libdeflate 已通过 apt 安装，使用系统库
-    
 elif [ "$OS_TYPE" == "macos" ]; then
     # macOS: 安装 isa-l
     if [ ! -f "/usr/local/lib/liblisal.a" ] && [ ! -f "/opt/homebrew/lib/liblisal.a" ]; then
@@ -70,7 +68,8 @@ elif [ "$OS_TYPE" == "macos" ]; then
         cd isa-l
         export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
         aclocal
-        libtoolize
+        # macOS brew libtool 提供的是 glibtoolize
+        glibtoolize || libtoolize || true
         autoconf
         ./configure --prefix=/usr/local --enable-static
         make -j${MAKE_JOBS}
@@ -78,19 +77,19 @@ elif [ "$OS_TYPE" == "macos" ]; then
     fi
     
 elif [ "$OS_TYPE" == "windows" ]; then
-    # Windows: 安装 isa-l (MinGW)
+    # Windows: isa-l 交叉编译 - 禁用 igzip 子项目（需要 nasm）
     if [ ! -f "/mingw64/lib/liblisal.a" ]; then
-        log_info "Building isa-l..."
+        log_info "Building isa-l for Windows..."
         cd /tmp
         rm -rf isa-l
         git clone --depth 1 https://github.com/intel/isa-l.git
         cd isa-l
+        # 交叉编译时禁用 igzip，它需要完整的 nasm 环境
         CC=x86_64-w64-mingw32-gcc ./autogen.sh
-        ./configure --prefix=/mingw64 --libdir=/mingw64/lib --host=x86_64-w64-mingw32 --enable-static
+        ./configure --prefix=/mingw64 --libdir=/mingw64/lib --host=x86_64-w64-mingw32 --enable-static --disable-igzip
         make -j${MAKE_JOBS}
         make install
     fi
-    # libdeflate 已通过 pacman 安装
 fi
 
 # 5. 设置编译环境变量
@@ -110,7 +109,6 @@ elif [ "$OS_TYPE" == "macos" ]; then
     export CXX="clang++"
     export CFLAGS="-O2"
     export CXXFLAGS="-O2"
-    # macOS 动态链接
     export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
     LIBDEFLATE_LIB=$(brew --prefix libdeflate)/lib 2>/dev/null || echo "/usr/local/lib"
     ISAL_LIB=$(brew --prefix isa-l)/lib 2>/dev/null || echo "/usr/local/lib"
@@ -134,13 +132,10 @@ log_info "Building fastp..."
 make clean 2>/dev/null || true
 
 if [ "$OS_TYPE" == "linux" ]; then
-    # Linux 静态编译
     make static -j${MAKE_JOBS} CXX="$CXX" CXXFLAGS="$CXXFLAGS" LDFLAGS="-static $LDFLAGS" LIBRARY_DIRS="$LIBRARY_DIRS" LIBS="$LIBS"
 elif [ "$OS_TYPE" == "macos" ]; then
-    # macOS 动态编译
     make -j${MAKE_JOBS} CXX="$CXX" CXXFLAGS="$CXXFLAGS" LIBRARY_DIRS="$LIBRARY_DIRS" LIBS="$LIBS"
 elif [ "$OS_TYPE" == "windows" ]; then
-    # Windows 静态编译
     make -j${MAKE_JOBS} CXX="$CXX" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS" LIBRARY_DIRS="$LIBRARY_DIRS" LIBS="$LIBS"
 fi
 
