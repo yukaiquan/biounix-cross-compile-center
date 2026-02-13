@@ -59,7 +59,10 @@ if [ "$OS_TYPE" == "linux" ]; then
 elif [ "$OS_TYPE" == "macos" ]; then
     # macOS 安装依赖
     log_info "Installing dependencies via brew..."
-    brew install libdeflate || true
+    brew install libdeflate nasm yasm autoconf automake libtool || true
+    
+    # 设置 brew bin 路径
+    export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
     
     # isa-l 在 brew 中可能不存在，从源码编译
     if [ ! -f "/usr/local/lib/liblisal.a" ] && [ ! -f "/opt/homebrew/lib/liblisal.a" ]; then
@@ -68,7 +71,9 @@ elif [ "$OS_TYPE" == "macos" ]; then
         rm -rf isa-l
         git clone https://github.com/intel/isa-l.git --depth 1
         cd isa-l
-        ./autogen.sh
+        aclocal
+        libtoolize
+        autoconf
         ./configure --prefix=/usr/local --enable-static
         make -j${MAKE_JOBS}
         sudo make install
