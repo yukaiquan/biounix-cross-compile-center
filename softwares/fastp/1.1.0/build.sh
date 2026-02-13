@@ -84,13 +84,40 @@ elif [ "$OS_TYPE" == "macos" ]; then
     export LDFLAGS="-L$LIBDEFLATE_LIB -L$ISAL_LIB"
 
 elif [ "$OS_TYPE" == "windows" ]; then
+    # Windows MSYS2 安装依赖
     export RUSTUP_HOME="/c/Users/runneradmin/.rustup"
     export CARGO_HOME="/c/Users/runneradmin/.cargo"
     export PATH="$CARGO_HOME/bin:$PATH"
-    export CC="gcc"
-    export CXX="g++"
-    export CFLAGS="-O2 -s"
-    export CXXFLAGS="-O2 -s"
+    
+    # 安装 isa-l (需要 MinGW 版本)
+    log_info "Installing isa-l..."
+    cd /tmp
+    rm -rf isa-l
+    git clone https://github.com/intel/isa-l.git --depth 1
+    cd isa-l
+    # 使用 MinGW 配置
+    CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++ ./autogen.sh
+    ./configure --prefix=/mingw64 --libdir=/mingw64/lib --host=x86_64-w64-mingw32
+    make -j${MAKE_JOBS}
+    make install
+    
+    # 安装 libdeflate (MinGW 版本)
+    log_info "Installing libdeflate..."
+    cd /tmp
+    rm -rf libdeflate
+    git clone https://github.com/ebiggers/libdeflate.git --depth 1
+    cd libdeflate
+    cmake -B build -DCMAKE_INSTALL_PREFIX=/mingw64 -DCMAKE_INSTALL_LIBDIR=/mingw64/lib -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++
+    cmake --build build
+    cmake --install build
+    
+    # 设置编译环境变量
+    export CC="x86_64-w64-mingw32-gcc"
+    export CXX="x86_64-w64-mingw32-g++"
+    export CFLAGS="-O2"
+    export CXXFLAGS="-O2"
+    export LDFLAGS="-L/mingw64/lib"
+    export PKG_CONFIG_PATH="/mingw64/lib/pkgconfig:$PKG_CONFIG_PATH"
 fi
 
 # 4. 返回源码目录构建 fastp
@@ -107,6 +134,7 @@ elif [ "$OS_TYPE" == "macos" ]; then
     # macOS 编译
     make -j${MAKE_JOBS}
 elif [ "$OS_TYPE" == "windows" ]; then
+    # Windows 编译 (MinGW)
     make -j${MAKE_JOBS}
 fi
 
