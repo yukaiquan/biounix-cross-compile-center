@@ -16,36 +16,36 @@ log_info "Installing build dependencies..."
 
 if [ "$OS_TYPE" == "linux" ]; then
     # 安装 isa-l (Intel Storage Acceleration Library)
-    if [ ! -f "/usr/lib64/liblisal.a" ] && [ ! -f "/usr/lib/liblisal.a" ]; then
+    if [ ! -f "/usr/lib64/liblisal.a" ]; then
         log_info "Installing isa-l..."
         cd /tmp
         rm -rf isa-l
         git clone https://github.com/intel/isa-l.git --depth 1
         cd isa-l
         ./autogen.sh
-        ./configure --prefix=/usr --libdir=/usr/lib64
+        ./configure --prefix=/usr --libdir=/usr/lib64 --enable-static
         make -j${MAKE_JOBS}
         sudo make install
         sudo ldconfig
+        ls -la /usr/lib64/liblisal.a || echo "Static lib not found"
     else
         log_info "isa-l already installed"
     fi
 
-    # 安装 libdeflate (apt 可能已安装)
-    if dpkg -l libdeflate-dev >/dev/null 2>&1; then
-        log_info "libdeflate-dev already installed via apt"
-    elif [ ! -f "/usr/lib64/libdeflate.a" ] && [ ! -f "/usr/lib/libdeflate.a" ] && [ ! -f "/usr/lib64/libdeflate.so" ]; then
-        log_info "Installing libdeflate from source..."
+    # 安装 libdeflate (使用 apt)
+    if ! dpkg -l libdeflate-dev >/dev/null 2>&1; then
+        log_info "Installing libdeflate..."
         cd /tmp
         rm -rf libdeflate
         git clone https://github.com/ebiggers/libdeflate.git --depth 1
         cd libdeflate
-        cmake -B build -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64
+        cmake -B build -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64 -DBUILD_SHARED_LIBS=OFF
         cmake --build build
         sudo cmake --install build
         sudo ldconfig
+        ls -la /usr/lib64/libdeflate.a || echo "Static lib not found"
     else
-        log_info "libdeflate already installed or using system package"
+        log_info "libdeflate-dev already installed via apt"
     fi
 
     # 设置编译环境变量
@@ -55,7 +55,6 @@ if [ "$OS_TYPE" == "linux" ]; then
     export CXXFLAGS="-O2 -static -s"
     export LDFLAGS="-static -L/usr/lib64"
     export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:$PKG_CONFIG_PATH"
-    export ENABLE_STATIC=1
 
 elif [ "$OS_TYPE" == "macos" ]; then
     # macOS 安装依赖
@@ -70,7 +69,7 @@ elif [ "$OS_TYPE" == "macos" ]; then
         git clone https://github.com/intel/isa-l.git --depth 1
         cd isa-l
         ./autogen.sh
-        ./configure --prefix=/usr/local
+        ./configure --prefix=/usr/local --enable-static
         make -j${MAKE_JOBS}
         sudo make install
     fi
@@ -97,9 +96,9 @@ elif [ "$OS_TYPE" == "windows" ]; then
     rm -rf isa-l
     git clone https://github.com/intel/isa-l.git --depth 1
     cd isa-l
-    # 使用 MinGW 配置
+    # 使用 MinGW 配置，静态库
     CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++ ./autogen.sh
-    ./configure --prefix=/mingw64 --libdir=/mingw64/lib --host=x86_64-w64-mingw32
+    ./configure --prefix=/mingw64 --libdir=/mingw64/lib --host=x86_64-w64-mingw32 --enable-static
     make -j${MAKE_JOBS}
     make install
     
@@ -109,7 +108,12 @@ elif [ "$OS_TYPE" == "windows" ]; then
     rm -rf libdeflate
     git clone https://github.com/ebiggers/libdeflate.git --depth 1
     cd libdeflate
-    cmake -B build -DCMAKE_INSTALL_PREFIX=/mingw64 -DCMAKE_INSTALL_LIBDIR=/mingw64/lib -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++
+    cmake -B build \
+        -DCMAKE_INSTALL_PREFIX=/mingw64 \
+        -DCMAKE_INSTALL_LIBDIR=/mingw64/lib \
+        -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+        -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+        -DBUILD_SHARED_LIBS=OFF
     cmake --build build
     cmake --install build
     
@@ -130,13 +134,13 @@ log_info "Building fastp..."
 make clean || true
 
 if [ "$OS_TYPE" == "linux" ]; then
-    # Linux 静态编译
-    make -j${MAKE_JOBS} CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS"
+    # Linux 静态编译 - 使用 pkg-config 获取正确的链接标志
+    PKG_CONFIG_PATH="/usr/lib64/pkgconfig:$PKG_CONFIG_PATH" \
+    LIBS="-lisal -ldeflate -lpthread" \
+    make -j${MAKE_JOBS} CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LDFLAGS="-static"
 elif [ "$OS_TYPE" == "macos" ]; then
-    # macOS 编译
     make -j${MAKE_JOBS}
 elif [ "$OS_TYPE" == "windows" ]; then
-    # Windows 编译 (MinGW)
     make -j${MAKE_JOBS}
 fi
 
