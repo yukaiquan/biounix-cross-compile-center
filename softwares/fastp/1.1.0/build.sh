@@ -11,23 +11,57 @@ cd "${SRC_PATH}"
 log_info "Building fastp in: $(pwd)"
 ls -la
 
-# 3. 设置编译环境
-log_info "Setting up build environment..."
+# 3. 安装编译依赖
+log_info "Installing build dependencies..."
 
 if [ "$OS_TYPE" == "linux" ]; then
+    # 安装 isa-l (Intel Storage Acceleration Library)
+    if [ ! -f "/usr/lib64/liblisal.a" ] && [ ! -f "/usr/lib/liblisal.a" ]; then
+        log_info "Installing isa-l..."
+        cd /tmp
+        rm -rf isa-l
+        git clone https://github.com/intel/isa-l.git
+        cd isa-l
+        ./autogen.sh
+        ./configure --prefix=/usr --libdir=/usr/lib64
+        make -j${MAKE_JOBS}
+        sudo make install
+        sudo ldconfig
+    else
+        log_info "isa-l already installed"
+    fi
+
+    # 安装 libdeflate
+    if [ ! -f "/usr/lib64/libdeflate.a" ] && [ ! -f "/usr/lib/libdeflate.a" ]; then
+        log_info "Installing libdeflate..."
+        cd /tmp
+        rm -rf libdeflate
+        git clone https://github.com/ebiggers/libdeflate.git
+        cd libdeflate
+        cmake -B build -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=/usr/lib64
+        cmake --build build
+        sudo cmake --install build
+        sudo ldconfig
+    else
+        log_info "libdeflate already installed"
+    fi
+
+    # 设置编译环境变量
     export CC="gcc"
     export CXX="g++"
     export CFLAGS="-O2 -static -s"
     export CXXFLAGS="-O2 -static -s"
-    export LDFLAGS="-static"
+    export LDFLAGS="-static -L/usr/lib64"
+    export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:$PKG_CONFIG_PATH"
     export ENABLE_STATIC=1
+
 elif [ "$OS_TYPE" == "macos" ]; then
     export CC="clang"
     export CXX="clang++"
-    # macOS 不支持完全静态链接，使用动态链接
     export CFLAGS="-O2 -s"
     export CXXFLAGS="-O2 -s"
     export LDFLAGS=""
+
 elif [ "$OS_TYPE" == "windows" ]; then
     export RUSTUP_HOME="/c/Users/runneradmin/.rustup"
     export CARGO_HOME="/c/Users/runneradmin/.cargo"
@@ -38,17 +72,16 @@ elif [ "$OS_TYPE" == "windows" ]; then
     export CXXFLAGS="-O2 -s"
 fi
 
-# 4. 构建 fastp
+# 4. 返回源码目录构建 fastp
+cd "${SRC_PATH}"
 log_info "Building fastp..."
 
 if [ "$OS_TYPE" == "linux" ]; then
     # Linux 静态编译
     make -j${MAKE_JOBS} CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS"
 elif [ "$OS_TYPE" == "macos" ]; then
-    # macOS 编译
     make -j${MAKE_JOBS}
 elif [ "$OS_TYPE" == "windows" ]; then
-    # Windows 编译 (MinGW)
     make -j${MAKE_JOBS}
 fi
 
