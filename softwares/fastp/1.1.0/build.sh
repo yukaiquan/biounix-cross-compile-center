@@ -31,9 +31,11 @@ if [ "$OS_TYPE" == "linux" ]; then
         log_info "isa-l already installed"
     fi
 
-    # 安装 libdeflate
-    if [ ! -f "/usr/lib64/libdeflate.a" ] && [ ! -f "/usr/lib/libdeflate.a" ] && [ ! -f "/usr/lib64/libdeflate.so" ]; then
-        log_info "Installing libdeflate..."
+    # 安装 libdeflate (apt 可能已安装)
+    if dpkg -l libdeflate-dev >/dev/null 2>&1; then
+        log_info "libdeflate-dev already installed via apt"
+    elif [ ! -f "/usr/lib64/libdeflate.a" ] && [ ! -f "/usr/lib/libdeflate.a" ] && [ ! -f "/usr/lib64/libdeflate.so" ]; then
+        log_info "Installing libdeflate from source..."
         cd /tmp
         rm -rf libdeflate
         git clone https://github.com/ebiggers/libdeflate.git --depth 1
