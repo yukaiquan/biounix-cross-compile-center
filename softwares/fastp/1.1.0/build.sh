@@ -15,32 +15,25 @@ ls -la
 log_info "Installing build dependencies..."
 
 if [ "$OS_TYPE" == "linux" ]; then
-    # Linux 静态编译依赖
     sudo apt-get update -qq
     sudo apt-get install -y build-essential cmake nasm yasm zlib1g-dev git \
         autoconf automake libtool pkg-config help2man libdeflate-dev || true
     
 elif [ "$OS_TYPE" == "macos" ]; then
-    # macOS 使用 brew
-    log_info "Installing dependencies via brew..."
     brew install libdeflate nasm yasm autoconf automake libtool || true
     export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
     
 elif [ "$OS_TYPE" == "windows" ]; then
-    # Windows MSYS2
     export RUSTUP_HOME="/c/Users/runneradmin/.rustup"
     export CARGO_HOME="/c/Users/runneradmin/.cargo"
     export PATH="$CARGO_HOME/bin:$PATH"
-    
     pacman -Sy --noconfirm base-devel cmake nasm yasm \
         mingw-w64-x86_64-zlib mingw-w64-x86_64-bzip2 \
         mingw-w64-x86_64-xz mingw-w64-x86_64-libdeflate \
-        git autoconf automake libtool || true
+        mingw-w64-x86_64-isa-l git autoconf automake libtool || true
 fi
 
 # 4. 安装静态库
-log_info "Installing static libraries..."
-
 if [ "$OS_TYPE" == "linux" ]; then
     if [ ! -f "/usr/lib64/liblisal.a" ]; then
         log_info "Building isa-l..."
@@ -54,7 +47,6 @@ if [ "$OS_TYPE" == "linux" ]; then
         sudo make install
         sudo ldconfig
     fi
-    
 elif [ "$OS_TYPE" == "macos" ]; then
     if [ ! -f "/usr/local/lib/liblisal.a" ] && [ ! -f "/opt/homebrew/lib/liblisal.a" ]; then
         log_info "Building isa-l..."
@@ -62,23 +54,15 @@ elif [ "$OS_TYPE" == "macos" ]; then
         rm -rf isa-l
         git clone --depth 1 https://github.com/intel/isa-l.git
         cd isa-l
-        export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
         chmod +x ./autogen.sh
         ./autogen.sh
         ./configure --prefix=/usr/local --enable-static
         make -j${MAKE_JOBS}
         sudo make install
     fi
-    
-elif [ "$OS_TYPE" == "windows" ]; then
-    # Windows: libdeflate 已通过 pacman 安装，isa-l 可选
-    log_info "Using system libdeflate (MSYS2 package)"
-    export LIBS="-ldeflate -lpthread"
 fi
 
-# 5. 设置编译环境变量
-log_info "Setting up build environment..."
-
+# 5. 设置编译环境
 if [ "$OS_TYPE" == "linux" ]; then
     export CC="gcc"
     export CXX="g++"
@@ -87,7 +71,6 @@ if [ "$OS_TYPE" == "linux" ]; then
     export LDFLAGS="-static -L/usr/lib64"
     export LIBRARY_DIRS="/usr/lib64"
     export LIBS="-lisal -ldeflate -lpthread"
-    
 elif [ "$OS_TYPE" == "macos" ]; then
     export CC="clang"
     export CXX="clang++"
@@ -98,7 +81,6 @@ elif [ "$OS_TYPE" == "macos" ]; then
     ISAL_LIB=$(brew --prefix isa-l)/lib 2>/dev/null || echo "/usr/local/lib"
     export LIBRARY_DIRS="$LIBDEFLATE_LIB $ISAL_LIB"
     export LIBS="-lisal -ldeflate -lpthread"
-    
 elif [ "$OS_TYPE" == "windows" ]; then
     export CC="x86_64-w64-mingw32-gcc"
     export CXX="x86_64-w64-mingw32-g++"
@@ -115,24 +97,12 @@ log_info "Building fastp..."
 
 make clean 2>/dev/null || true
 
-# Windows 移除 isa-l 依赖（只用 libdeflate）
-if [ "$OS_TYPE" == "windows" ]; then
-    log_info "Patching Makefile to remove isa-l dependency..."
-    perl -i -pe 's/-lisal\b\s*//g' Makefile
-    grep "^LIBS :=" Makefile
-fi
-
-# Windows 移除 isa-l 依赖（只用 libdeflate）
-if [ "$OS_TYPE" == "windows" ]; then
-    log_info "Building fastp without isa-l..."
-    # 直接用 make 但覆盖 LIBS
-    make -j${MAKE_JOBS} CXX="$CXX" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS" LIBS="-ldeflate -lpthread"
-else
-    if [ "$OS_TYPE" == "linux" ]; then
-        make static -j${MAKE_JOBS} CXX="$CXX" CXXFLAGS="$CXXFLAGS" LDFLAGS="-static $LDFLAGS" LIBRARY_DIRS="$LIBRARY_DIRS" LIBS="$LIBS"
-    elif [ "$OS_TYPE" == "macos" ]; then
-        make -j${MAKE_JOBS} CXX="$CXX" CXXFLAGS="$CXXFLAGS" LIBRARY_DIRS="$LIBRARY_DIRS" LIBS="$LIBS"
-    fi
+if [ "$OS_TYPE" == "linux" ]; then
+    make static -j${MAKE_JOBS} CXX="$CXX" CXXFLAGS="$CXXFLAGS" LDFLAGS="-static $LDFLAGS" LIBRARY_DIRS="$LIBRARY_DIRS" LIBS="$LIBS"
+elif [ "$OS_TYPE" == "macos" ]; then
+    make -j${MAKE_JOBS} CXX="$CXX" CXXFLAGS="$CXXFLAGS" LIBRARY_DIRS="$LIBRARY_DIRS" LIBS="$LIBS"
+elif [ "$OS_TYPE" == "windows" ]; then
+    make -j${MAKE_JOBS} CXX="$CXX" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS" LIBRARY_DIRS="$LIBRARY_DIRS" LIBS="$LIBS"
 fi
 
 # 7. 安装产物
