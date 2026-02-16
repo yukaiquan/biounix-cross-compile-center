@@ -75,7 +75,7 @@ elif [ "$OS_TYPE" == "macos" ]; then
     export CC="clang"
     export CXX="clang++"
     export CFLAGS="-O2"
-    export CXXFLAGS="-O2 -std=c++11"
+    export CXXFLAGS="-O2 -std=c++11 -stdlib=libc++"
     export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
     LIBDEFLATE_LIB=$(brew --prefix libdeflate)/lib 2>/dev/null || echo "/usr/local/lib"
     ISAL_LIB=$(brew --prefix isa-l)/lib 2>/dev/null || echo "/usr/local/lib"
