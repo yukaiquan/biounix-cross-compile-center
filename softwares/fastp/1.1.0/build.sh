@@ -67,10 +67,9 @@ elif [ "$OS_TYPE" == "macos" ]; then
         git clone --depth 1 https://github.com/intel/isa-l.git
         cd isa-l
         export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
-        aclocal
-        # macOS brew libtool 提供的是 glibtoolize
-        glibtoolize || libtoolize || true
-        autoconf
+        # macOS 用 autogen.sh 生成 configure
+        chmod +x ./autogen.sh
+        ./autogen.sh
         ./configure --prefix=/usr/local --enable-static
         make -j${MAKE_JOBS}
         sudo make install
