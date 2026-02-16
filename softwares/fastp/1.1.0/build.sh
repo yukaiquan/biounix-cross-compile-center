@@ -84,11 +84,13 @@ elif [ "$OS_TYPE" == "macos" ]; then
 elif [ "$OS_TYPE" == "windows" ]; then
     export CC="x86_64-w64-mingw32-gcc"
     export CXX="x86_64-w64-mingw32-g++"
-    export CFLAGS="-O2 -static -s"
-    export CXXFLAGS="-O2 -static -s"
-    export LDFLAGS="-static -L/mingw64/lib"
+    # 使用完整静态链接
+    export CFLAGS="-O2 -static-libgcc -static-libstdc++"
+    export CXXFLAGS="-O2 -static-libgcc -static-libstdc++"
+    # 链接顺序重要
+    export LDFLAGS="-static -static-libgcc -static-libstdc++ -L/mingw64/lib"
     export LIBRARY_DIRS="/mingw64/lib"
-    export LIBS="-lisal -ldeflate -lpthread"
+    export LIBS="-lisal -ldeflate -lbz2 -llzma -lz -lpthread"
 fi
 
 # 6. 清理并构建
@@ -111,6 +113,14 @@ mkdir -p "${INSTALL_PREFIX}/bin"
 
 if [ "$OS_TYPE" == "windows" ]; then
     cp fastp.exe "${INSTALL_PREFIX}/bin/"
+    
+    # 复制运行时 DLL（确保可执行）
+    log_info "Copying runtime DLLs..."
+    for dll in libgcc_s_seh libstdc++ libdeflate libbz2 liblzma libz; do
+        if [ -f "/mingw64/bin/${dll}.dll" ]; then
+            cp "/mingw64/bin/${dll}.dll" "${INSTALL_PREFIX}/bin/" 2>/dev/null || true
+        fi
+    done
 else
     cp fastp "${INSTALL_PREFIX}/bin/"
 fi
@@ -121,6 +131,15 @@ if [ -f "$FINAL_BIN" ]; then
     log_info "Build successful!"
     file "$FINAL_BIN"
     ls -la "$FINAL_BIN"
+    
+    # Windows: 检查依赖
+    if [ "$OS_TYPE" == "windows" ]; then
+        log_info "Checking dependencies..."
+        # 对于 MinGW 产物，使用 objdump 或dumpbin 检查依赖
+        if command -v objdump &>/dev/null; then
+            objdump -p "${FINAL_BIN}" 2>/dev/null | grep -E "DLL Name" || true
+        fi
+    fi
 else
     log_err "Build artifact not found: $FINAL_BIN"
     exit 1
