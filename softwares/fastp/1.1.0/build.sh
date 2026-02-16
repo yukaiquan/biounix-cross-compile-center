@@ -76,18 +76,21 @@ elif [ "$OS_TYPE" == "macos" ]; then
     fi
     
 elif [ "$OS_TYPE" == "windows" ]; then
-    # Windows: isa-l 交叉编译 - 禁用 igzip 子项目（需要 nasm）
+    # Windows: isa-l 只构建静态库，跳过 igzip
     if [ ! -f "/mingw64/lib/liblisal.a" ]; then
         log_info "Building isa-l for Windows..."
         cd /tmp
         rm -rf isa-l
         git clone --depth 1 https://github.com/intel/isa-l.git
         cd isa-l
-        # 交叉编译时禁用 igzip，它需要完整的 nasm 环境
         CC=x86_64-w64-mingw32-gcc ./autogen.sh
-        ./configure --prefix=/mingw64 --libdir=/mingw64/lib --host=x86_64-w64-mingw32 --enable-static --disable-igzip
-        make -j${MAKE_JOBS}
-        make install
+        ./configure --prefix=/mingw64 --libdir=/mingw64/lib --host=x86_64-w64-mingw32
+        # 只构建静态库，跳过 igzip 程序
+        make libisal.a -j${MAKE_JOBS}
+        mkdir -p /mingw64/lib /mingw64/include
+        cp libisal.a /mingw64/lib/
+        cp isa-l.h /mingw64/include/ 2>/dev/null || true
+        cp -r include/* /mingw64/include/ 2>/dev/null || true
     fi
 fi
 
