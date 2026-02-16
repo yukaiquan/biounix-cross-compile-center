@@ -17,17 +17,16 @@ if [ "$OS_TYPE" == "linux" ]; then
     sudo apt-get update -qq
     sudo apt-get install -y build-essential cmake nasm yasm zlib1g-dev git \
         autoconf automake libtool pkg-config help2man libdeflate-dev || true
-    
+
 elif [ "$OS_TYPE" == "macos" ]; then
     brew install libdeflate isa-l nasm yasm autoconf automake libtool || true
     export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
-    
+
 elif [ "$OS_TYPE" == "windows" ]; then
     export RUSTUP_HOME="/c/Users/runneradmin/.rustup"
     export CARGO_HOME="/c/Users/runneradmin/.cargo"
     export PATH="$CARGO_HOME/bin:$PATH"
-    
-    # 使用 mingw-w64-clang 而不是 mingw-w64-gcc
+
     pacman -Sy --noconfirm \
         mingw-w64-x86_64-clang \
         mingw-w64-x86_64-cmake \
@@ -39,15 +38,14 @@ elif [ "$OS_TYPE" == "windows" ]; then
         mingw-w64-x86_64-libdeflate \
         mingw-w64-x86_64-isa-l \
         git autoconf automake libtool || true
-    
-    # 设置 clang 工具链
+
     export CC="clang"
     export CXX="clang++"
     export AR="llvm-ar"
     export RANLIB="llvm-ranlib"
 fi
 
-# 4. 安装 isa-l 静态库
+# 4. 安装 isa-l 静态库 (Linux)
 if [ "$OS_TYPE" == "linux" ]; then
     if [ ! -f "/usr/lib64/liblisal.a" ]; then
         log_info "Building isa-l..."
@@ -83,7 +81,6 @@ elif [ "$OS_TYPE" == "macos" ]; then
     export LIBRARY_DIRS="$LIBDEFLATE_LIB $ISAL_LIB"
     export LIBS="-lisal -ldeflate -lpthread"
 elif [ "$OS_TYPE" == "windows" ]; then
-    # Windows + Clang: 使用静态链接
     export CFLAGS="-O2 -static"
     export CXXFLAGS="-O2 -std=c++11 -static"
     export LDFLAGS="-static"
@@ -98,9 +95,7 @@ log_info "Building fastp..."
 make clean 2>/dev/null || true
 
 if [ "$OS_TYPE" == "windows" ]; then
-    # Windows 构建
     log_info "Using CC=$CC CXX=$CXX"
-    # 确保编译所有源文件
     make -j${MAKE_JOBS} 2>&1 || {
         log_err "Build failed"
         exit 1
@@ -121,17 +116,26 @@ if [ "$OS_TYPE" == "windows" ]; then
         log_err "fastp.exe not found"
         exit 1
     fi
-    
+
     cp fastp.exe "${INSTALL_PREFIX}/bin/"
-    
-    # 复制必要 DLL（Clang 运行时）
+
+    # 复制所有必要的 DLL
     log_info "Copying runtime DLLs..."
-    for dll in libclang-rt.builtins-x86_64; do
-        dllpath="/mingw64/bin/${dll}.dll"
-        if [ -f "$dllpath" ]; then
-            cp "$dllpath" "${INSTALL_PREFIX}/bin/" 2>/dev/null && log_info "Copied ${dll}.dll" || true
+    cd "${INSTALL_PREFIX}/bin"
+
+    # DLL 列表（从 objdump -x fastp.exe 获取）
+    DLLS="libdeflate.dll libisal-2.dll libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll libbz2-2.dll liblzma-5.dll libz-1.dll"
+
+    for dll in $DLLS; do
+        src="/mingw64/bin/${dll}"
+        if [ -f "$src" ]; then
+            cp -f "$src" . 2>/dev/null && log_info "Copied ${dll}" || true
+        else
+            log_warn "DLL not found: ${dll}"
         fi
     done
+
+    cd "${SRC_PATH}"
 else
     cp fastp "${INSTALL_PREFIX}/bin/"
 fi
@@ -142,6 +146,11 @@ if [ -f "$FINAL_BIN" ]; then
     log_info "Build successful!"
     file "$FINAL_BIN"
     ls -la "$FINAL_BIN"
+
+    if [ "$OS_TYPE" == "windows" ]; then
+        log_info "DLL files in output directory:"
+        ls -la "${INSTALL_PREFIX}/bin/"*.dll 2>/dev/null || true
+    fi
 else
     log_err "Build artifact not found: $FINAL_BIN"
     exit 1
