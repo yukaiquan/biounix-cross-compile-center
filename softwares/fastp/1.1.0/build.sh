@@ -84,11 +84,11 @@ elif [ "$OS_TYPE" == "macos" ]; then
 elif [ "$OS_TYPE" == "windows" ]; then
     export CC="x86_64-w64-mingw32-gcc"
     export CXX="x86_64-w64-mingw32-g++"
-    # 使用完整静态链接
-    export CFLAGS="-O2 -static-libgcc -static-libstdc++"
-    export CXXFLAGS="-O2 -static-libgcc -static-libstdc++"
-    # 链接顺序重要
-    export LDFLAGS="-static -static-libgcc -static-libstdc++ -L/mingw64/lib"
+    # 简单优化，添加调试信息
+    export CFLAGS="-O1 -g"
+    export CXXFLAGS="-O1 -g"
+    # 不使用静态链接，让系统处理依赖
+    export LDFLAGS=""
     export LIBRARY_DIRS="/mingw64/lib"
     export LIBS="-lisal -ldeflate -lbz2 -llzma -lz -lpthread"
 fi
@@ -99,12 +99,16 @@ log_info "Building fastp..."
 
 make clean 2>/dev/null || true
 
-if [ "$OS_TYPE" == "linux" ]; then
-    make static -j${MAKE_JOBS} CXX="$CXX" CXXFLAGS="$CXXFLAGS" LDFLAGS="-static $LDFLAGS" LIBRARY_DIRS="$LIBRARY_DIRS" LIBS="$LIBS"
-elif [ "$OS_TYPE" == "macos" ]; then
-    make -j${MAKE_JOBS} CXX="$CXX" CXXFLAGS="$CXXFLAGS" LIBRARY_DIRS="$LIBRARY_DIRS" LIBS="$LIBS"
-elif [ "$OS_TYPE" == "windows" ]; then
-    make -j${MAKE_JOBS} CXX="$CXX" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS" LIBRARY_DIRS="$LIBRARY_DIRS" LIBS="$LIBS"
+if [ "$OS_TYPE" == "windows" ]; then
+    # Windows 构建：输出详细编译信息
+    log_info "Compiling with: CXX=$CXX CXXFLAGS=$CXXFLAGS"
+    make -j${MAKE_JOBS} CXX="$CXX" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS" LIBRARY_DIRS="$LIBRARY_DIRS" LIBS="$LIBS" 2>&1 | tee compile.log || true
+else
+    if [ "$OS_TYPE" == "linux" ]; then
+        make static -j${MAKE_JOBS} CXX="$CXX" CXXFLAGS="$CXXFLAGS" LDFLAGS="-static $LDFLAGS" LIBRARY_DIRS="$LIBRARY_DIRS" LIBS="$LIBS"
+    else
+        make -j${MAKE_JOBS} CXX="$CXX" CXXFLAGS="$CXXFLAGS" LIBRARY_DIRS="$LIBRARY_DIRS" LIBS="$LIBS"
+    fi
 fi
 
 # 7. 安装产物
@@ -112,13 +116,20 @@ log_info "Installing binaries..."
 mkdir -p "${INSTALL_PREFIX}/bin"
 
 if [ "$OS_TYPE" == "windows" ]; then
+    # 检查编译是否成功
+    if [ ! -f "fastp.exe" ]; then
+        log_err "fastp.exe not found after build"
+        cat compile.log
+        exit 1
+    fi
+    
     cp fastp.exe "${INSTALL_PREFIX}/bin/"
     
-    # 复制运行时 DLL（确保可执行）
+    # 复制运行时 DLL
     log_info "Copying runtime DLLs..."
-    for dll in libgcc_s_seh libstdc++ libdeflate libbz2 liblzma libz; do
+    for dll in libgcc_s_seh-1 libstdc++-6 libdeflate libbz2-2 liblzma-5 libz-1 pthread-2; do
         if [ -f "/mingw64/bin/${dll}.dll" ]; then
-            cp "/mingw64/bin/${dll}.dll" "${INSTALL_PREFIX}/bin/" 2>/dev/null || true
+            cp "/mingw64/bin/${dll}.dll" "${INSTALL_PREFIX}/bin/" 2>/dev/null && log_info "Copied ${dll}.dll" || true
         fi
     done
 else
@@ -134,10 +145,13 @@ if [ -f "$FINAL_BIN" ]; then
     
     # Windows: 检查依赖
     if [ "$OS_TYPE" == "windows" ]; then
-        log_info "Checking dependencies..."
-        # 对于 MinGW 产物，使用 objdump 或dumpbin 检查依赖
+        log_info "Listing binary and DLLs..."
+        ls -la "${INSTALL_PREFIX}/bin/"
+        
+        log_info "Checking DLL dependencies..."
+        # 使用 objdump 检查
         if command -v objdump &>/dev/null; then
-            objdump -p "${FINAL_BIN}" 2>/dev/null | grep -E "DLL Name" || true
+            objdump -p "$FINAL_BIN" 2>/dev/null | grep -E "DLL Name" || true
         fi
     fi
 else
