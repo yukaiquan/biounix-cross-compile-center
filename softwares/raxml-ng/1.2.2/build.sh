@@ -18,59 +18,21 @@ if [ ! -f "CMakeLists.txt" ]; then
     [ -n "$CMAKEROOT" ] && cd "$CMAKEROOT"
 fi
 
-# 4. Windows 特殊处理
+# 4. Windows 不支持（pll-modules 与 GCC 15 不兼容）
 if [ "$OS_TYPE" == "windows" ]; then
-    log_info "Applying Windows compatibility patches..."
-    
-    # 修复 sysutil.cpp 中的 cpuid 调用
-    if [ -f "src/util/sysutil.cpp" ]; then
-        sed -i 's/__cpuid(/raxml_cpuid(/g' src/util/sysutil.cpp
-        sed -i 's/u_int32_t/uint32_t/g' src/util/sysutil.cpp
-    fi
-    
-    # 修复 pll-modules 中的 errno 兼容问题
-    # pllmod_set_error 的第一个参数是 int，不是 int*
-    if [ -f "libs/pll-modules/src/pllmod_common.h" ]; then
-        # 将声明改为接受 int 而不是 int*
-        sed -i 's/void pllmod_set_error(int \*errno,/void pllmod_set_error(int errno,/g' libs/pll-modules/src/pllmod_common.h
-    fi
-    
-    # 在 CMakeLists.txt 中添加忽略警告
-    if [ -f "libs/pll-modules/CMakeLists.txt" ] || [ -f "CMakeLists.txt" ]; then
-        for cmakefile in libs/pll-modules/CMakeLists.txt libs/pll-modules/**/CMakeLists.txt; do
-            [ -f "$cmakefile" ] || continue
-            # 注入忽略 int-conversion 警告
-            if ! grep -q "Wno-error=int-conversion" "$cmakefile"; then
-                sed -i '/add_library/i add_compile_options(-Wno-error=int-conversion)' "$cmakefile" 2>/dev/null || true
-            fi
-        done
-    fi
+    log_warn "raxml-ng Windows build is NOT SUPPORTED due to pll-modules incompatibility with GCC 15"
+    log_warn "Please download pre-built binary from: https://github.com/amkaze/raxml-ng/releases"
+    exit 0
 fi
 
 # 5. CMake 编译参数
-CMAKE_OPTS="-DCMAKE_BUILD_TYPE=Release"
-# Windows 禁用 pll-modules（GCC 15 兼容性问题）
-CMAKE_OPTS="${CMAKE_OPTS} -DUSE_LIBPLL_CMAKE=OFF"
-CMAKE_OPTS="${CMAKE_OPTS} -DUSE_GMP=ON -DUSE_PTHREADS=ON"
-CMAKE_OPTS="${CMAKE_OPTS} -DCMAKE_POLICY_VERSION_MINIMUM=3.5"
-
 case "${OS_TYPE}" in
-    "windows")
-        # Windows: 动态编译，禁用 SIMD
-        CMAKE_OPTS="${CMAKE_OPTS} -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++"
-        CMAKE_OPTS="${CMAKE_OPTS} -DENABLE_RAXML_SIMD=OFF"
-        CMAKE_OPTS="${CMAKE_OPTS} -DENABLE_PLLMOD_SIMD=OFF"
-        CMAKE_OPTS="${CMAKE_OPTS} -DSTATIC_BUILD=OFF"
-        # 线程栈大小
-        CMAKE_OPTS="${CMAKE_OPTS} -DCMAKE_EXE_LINKER_FLAGS=-Wl,--stack,16777216"
-        GENERATOR="MSYS Makefiles"
-        ;;
     "linux")
-        CMAKE_OPTS="${CMAKE_OPTS} -DSTATIC_BUILD=ON"
+        CMAKE_OPTS="-DCMAKE_BUILD_TYPE=Release -DUSE_LIBPLL_CMAKE=ON -DSTATIC_BUILD=ON -DUSE_GMP=ON -DUSE_PTHREADS=ON"
         GENERATOR="Unix Makefiles"
         ;;
     "macos")
-        CMAKE_OPTS="${CMAKE_OPTS} -DSTATIC_BUILD=OFF"
+        CMAKE_OPTS="-DCMAKE_BUILD_TYPE=Release -DUSE_LIBPLL_CMAKE=ON -DSTATIC_BUILD=OFF -DUSE_GMP=ON -DUSE_PTHREADS=ON"
         GENERATOR="Unix Makefiles"
         ;;
 esac
