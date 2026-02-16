@@ -117,15 +117,22 @@ make clean 2>/dev/null || true
 
 # Windows 移除 isa-l 依赖（只用 libdeflate）
 if [ "$OS_TYPE" == "windows" ]; then
-    sed -i 's/-lisal //g' Makefile
+    log_info "Patching Makefile to remove isa-l dependency..."
+    perl -i -pe 's/-lisal\b\s*//g' Makefile
+    grep "^LIBS :=" Makefile
 fi
 
-if [ "$OS_TYPE" == "linux" ]; then
-    make static -j${MAKE_JOBS} CXX="$CXX" CXXFLAGS="$CXXFLAGS" LDFLAGS="-static $LDFLAGS" LIBRARY_DIRS="$LIBRARY_DIRS" LIBS="$LIBS"
-elif [ "$OS_TYPE" == "macos" ]; then
-    make -j${MAKE_JOBS} CXX="$CXX" CXXFLAGS="$CXXFLAGS" LIBRARY_DIRS="$LIBRARY_DIRS" LIBS="$LIBS"
-elif [ "$OS_TYPE" == "windows" ]; then
-    make -j${MAKE_JOBS} CXX="$CXX" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS" LIBRARY_DIRS="$LIBRARY_DIRS" LIBS="$LIBS"
+# Windows 移除 isa-l 依赖（只用 libdeflate）
+if [ "$OS_TYPE" == "windows" ]; then
+    log_info "Building fastp without isa-l..."
+    # 直接用 make 但覆盖 LIBS
+    make -j${MAKE_JOBS} CXX="$CXX" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS" LIBS="-ldeflate -lpthread"
+else
+    if [ "$OS_TYPE" == "linux" ]; then
+        make static -j${MAKE_JOBS} CXX="$CXX" CXXFLAGS="$CXXFLAGS" LDFLAGS="-static $LDFLAGS" LIBRARY_DIRS="$LIBRARY_DIRS" LIBS="$LIBS"
+    elif [ "$OS_TYPE" == "macos" ]; then
+        make -j${MAKE_JOBS} CXX="$CXX" CXXFLAGS="$CXXFLAGS" LIBRARY_DIRS="$LIBRARY_DIRS" LIBS="$LIBS"
+    fi
 fi
 
 # 7. 安装产物
