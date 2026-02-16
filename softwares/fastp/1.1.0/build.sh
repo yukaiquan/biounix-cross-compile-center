@@ -24,7 +24,6 @@ elif [ "$OS_TYPE" == "macos" ]; then
     # macOS 使用 brew
     log_info "Installing dependencies via brew..."
     brew install libdeflate nasm yasm autoconf automake libtool || true
-    # 设置 brew bin 路径
     export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
     
 elif [ "$OS_TYPE" == "windows" ]; then
@@ -33,7 +32,6 @@ elif [ "$OS_TYPE" == "windows" ]; then
     export CARGO_HOME="/c/Users/runneradmin/.cargo"
     export PATH="$CARGO_HOME/bin:$PATH"
     
-    # MSYS2 pacman 安装依赖
     pacman -Sy --noconfirm base-devel cmake nasm yasm \
         mingw-w64-x86_64-zlib mingw-w64-x86_64-bzip2 \
         mingw-w64-x86_64-xz mingw-w64-x86_64-libdeflate \
@@ -44,7 +42,6 @@ fi
 log_info "Installing static libraries..."
 
 if [ "$OS_TYPE" == "linux" ]; then
-    # Linux: 安装 isa-l
     if [ ! -f "/usr/lib64/liblisal.a" ]; then
         log_info "Building isa-l..."
         cd /tmp
@@ -59,7 +56,6 @@ if [ "$OS_TYPE" == "linux" ]; then
     fi
     
 elif [ "$OS_TYPE" == "macos" ]; then
-    # macOS: 安装 isa-l
     if [ ! -f "/usr/local/lib/liblisal.a" ] && [ ! -f "/opt/homebrew/lib/liblisal.a" ]; then
         log_info "Building isa-l..."
         cd /tmp
@@ -67,7 +63,6 @@ elif [ "$OS_TYPE" == "macos" ]; then
         git clone --depth 1 https://github.com/intel/isa-l.git
         cd isa-l
         export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
-        # macOS 用 autogen.sh 生成 configure
         chmod +x ./autogen.sh
         ./autogen.sh
         ./configure --prefix=/usr/local --enable-static
@@ -76,23 +71,9 @@ elif [ "$OS_TYPE" == "macos" ]; then
     fi
     
 elif [ "$OS_TYPE" == "windows" ]; then
-    # Windows: isa-l 只构建静态库
-    if [ ! -f "/mingw64/lib/liblisal.a" ]; then
-        log_info "Building isa-l for Windows..."
-        cd /tmp
-        rm -rf isa-l
-        git clone --depth 1 https://github.com/intel/isa-l.git
-        cd isa-l
-        CC=x86_64-w64-mingw32-gcc ./autogen.sh
-        ./configure --prefix=/mingw64 --libdir=/mingw64/lib --host=x86_64-w64-mingw32
-        # 只构建库，跳过 programs
-        make erasure_code/libisal.la crc/libisal_crc.la -j${MAKE_JOBS}
-        # 复制静态库
-        mkdir -p /mingw64/lib /mingw64/include
-        cp .libs/libisal.a /mingw64/lib/ 2>/dev/null || cp erasure_code/.libs/libisal.a /mingw64/lib/ 2>/dev/null || true
-        cp isa-l.h /mingw64/include/ 2>/dev/null || true
-        cp -r include/* /mingw64/include/ 2>/dev/null || true
-    fi
+    # Windows: libdeflate 已通过 pacman 安装，isa-l 可选
+    log_info "Using system libdeflate (MSYS2 package)"
+    export LIBS="-ldeflate -lpthread"
 fi
 
 # 5. 设置编译环境变量
@@ -133,6 +114,11 @@ cd "${SRC_PATH}"
 log_info "Building fastp..."
 
 make clean 2>/dev/null || true
+
+# Windows 移除 isa-l 依赖（只用 libdeflate）
+if [ "$OS_TYPE" == "windows" ]; then
+    sed -i 's/-lisal //g' Makefile
+fi
 
 if [ "$OS_TYPE" == "linux" ]; then
     make static -j${MAKE_JOBS} CXX="$CXX" CXXFLAGS="$CXXFLAGS" LDFLAGS="-static $LDFLAGS" LIBRARY_DIRS="$LIBRARY_DIRS" LIBS="$LIBS"
