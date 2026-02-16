@@ -76,7 +76,7 @@ elif [ "$OS_TYPE" == "macos" ]; then
     fi
     
 elif [ "$OS_TYPE" == "windows" ]; then
-    # Windows: isa-l 只构建静态库，跳过 igzip
+    # Windows: isa-l 只构建静态库
     if [ ! -f "/mingw64/lib/liblisal.a" ]; then
         log_info "Building isa-l for Windows..."
         cd /tmp
@@ -85,10 +85,11 @@ elif [ "$OS_TYPE" == "windows" ]; then
         cd isa-l
         CC=x86_64-w64-mingw32-gcc ./autogen.sh
         ./configure --prefix=/mingw64 --libdir=/mingw64/lib --host=x86_64-w64-mingw32
-        # 只构建静态库，跳过 igzip 程序
-        make libisal.a -j${MAKE_JOBS}
+        # 只构建库，跳过 programs
+        make erasure_code/libisal.la crc/libisal_crc.la -j${MAKE_JOBS}
+        # 复制静态库
         mkdir -p /mingw64/lib /mingw64/include
-        cp libisal.a /mingw64/lib/
+        cp .libs/libisal.a /mingw64/lib/ 2>/dev/null || cp erasure_code/.libs/libisal.a /mingw64/lib/ 2>/dev/null || true
         cp isa-l.h /mingw64/include/ 2>/dev/null || true
         cp -r include/* /mingw64/include/ 2>/dev/null || true
     fi
