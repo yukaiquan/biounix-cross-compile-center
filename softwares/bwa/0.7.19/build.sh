@@ -14,53 +14,26 @@ log_info "Building bwa in: $(pwd)"
 if [ "$OS_TYPE" == "windows" ]; then
     log_info "Building for Windows (MSYS2)..."
     
-    # Windows 兼容头文件 - 简化版
-    cat > kutils_win.h << 'EOF'
-#ifndef KUTILS_WIN_H
-#define KUTILS_WIN_H
-
-#ifdef _WIN32
-
-#include <stdlib.h>
-#include <stdio.h>
-
-// sys/resource.h 替代
-typedef struct {
-    long tv_sec;
-    long tv_usec;
-} rusage_t;
-
-#ifndef RUSAGE_SELF
-#define RUSAGE_SELF 0
-#endif
-
-static inline int getrusage(int who, rusage_t *r) {
-    (void)who;
-    if (r) {
-        r->tv_sec = 0;
-        r->tv_usec = 0;
-    }
-    return 0;
-}
-
-// lrand48/srand48 替代
-static inline long lrand48(void) {
-    return (long)((rand() << 16) ^ rand());
-}
-
-static inline void srand48(long seed) {
-    srand((unsigned int)seed);
-}
-
-#endif
-#endif
-EOF
+    # 方法1: 修改源文件，替换 sys/resource.h
+    log_info "Patching source files for Windows..."
+    
+    # 备份并替换 sys/resource.h
+    for file in utils.c bntseq.c; do
+        if [ -f "$file" ]; then
+            # 注释掉 sys/resource.h 并添加兼容头
+            sed -i 's|#include <sys/resource.h>|// #include <sys/resource.h>  // removed for Windows|g' "$file"
+        fi
+    done
+    
+    # 添加兼容头到 utils.c 开头（在第一个 #include 之后）
+    sed -i '/^#include/a #include <stdlib.h>' utils.c
+    sed -i '/^#include/a #include <time.h>' utils.c
     
     # 清理并使用自定义 CFLAGS 编译
     make clean 2>/dev/null || true
     
     # Windows CFLAGS
-    WIN_CFLAGS="-g -Wall -Wno-unused-function -O3 -static -include kutils_win.h -DHAVE_PTHREAD"
+    WIN_CFLAGS="-g -Wall -Wno-unused-function -O3 -static -DHAVE_PTHREAD -DUSE_MALLOC_WRAPPERS"
     WIN_LDFLAGS="-static -static-libgcc -static-libstdc++"
     
     log_info "Compiling with custom CFLAGS..."
@@ -87,9 +60,6 @@ else
             if [ -d "/opt/homebrew/opt/zlib" ]; then
                 export CFLAGS="${CFLAGS} -I/opt/homebrew/opt/zlib/include"
                 export LDFLAGS="-L/opt/homebrew/opt/zlib/lib"
-            elif [ -d "/usr/local/opt/zlib" ]; then
-                export CFLAGS="${CFLAGS} -I/usr/local/opt/zlib/include"
-                export LDFLAGS="-L/usr/local/opt/zlib/lib"
             fi
             
             if [ "${ARCH_TYPE}" == "arm64" ]; then
