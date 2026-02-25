@@ -31,11 +31,6 @@ typedef struct {
     long tv_sec;
     long tv_usec;
     long tv_maxrss;
-    long ti_unused;
-    long ti_ru.ru_utime.tv_sec;
-    long ti_ru.ru_utime.tv_usec;
-    long ti_ru.ru_stime.tv_sec;
-    long ti_ru.ru_stime.tv_usec;
 } rusage_t;
 
 #define RUSAGE_SELF 0
@@ -65,12 +60,16 @@ static inline void srand48(long seed) {
 #endif
 EOF
     
-    # 修改 utils.c - 添加兼容头
-    sed -i '/^#include "bwa.h"/a #include "kutils_win.h"' utils.c
-    sed -i 's|#include <sys/resource.h>|// #include <sys/resource.h>|' utils.c
-    
-    # 修改 bntseq.c - 添加兼容头
-    sed -i '/^#include "bntseq.h"/a #include "kutils_win.h"' bntseq.c
+    # 找到所有需要修改的 .c 文件
+    for file in utils.c bntseq.c; do
+        if [ -f "$file" ]; then
+            # 在文件开头添加 #include "kutils_win.h"
+            sed -i '1i #include "kutils_win.h"' "$file"
+            # 注释掉 sys/resource.h
+            sed -i 's|#include <sys/resource.h>|// #include <sys/resource.h>|' "$file"
+            log_info "Patched: $file"
+        fi
+    done
     
     # 清理并编译
     make clean 2>/dev/null || true
