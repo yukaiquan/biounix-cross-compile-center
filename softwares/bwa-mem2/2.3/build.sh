@@ -16,23 +16,23 @@ if [ ! -d "ext/safestringlib" ] || [ ! -f "ext/safestringlib/Makefile" ]; then
     git submodule update --init --recursive
 fi
 
-# 4. ARM 平台不支持
-if [ "$OS_TYPE" == "linux" ] && [ "$ARCH_TYPE" == "arm64" ]; then
-    log_warn "bwa-mem2 does not support Linux ARM64 (requires x86 SIMD)"
-    log_warn "Use minimap2 instead for ARM platforms"
+# 4. ARM 不支持
+if [ "$ARCH_TYPE" == "arm64" ]; then
+    log_warn "bwa-mem2 does not support ARM64"
     exit 0
 fi
 
-if [ "$OS_TYPE" == "macos" ] && [ "$ARCH_TYPE" == "arm64" ]; then
-    log_warn "bwa-mem2 does not support macOS ARM64 (requires x86 SIMD)"
-    log_warn "Use minimap2 instead for Apple Silicon"
+# 5. macOS 不支持（safestringlib 与 SDK 冲突）
+if [ "$OS_TYPE" == "macos" ]; then
+    log_warn "bwa-mem2 macOS build is NOT SUPPORTED"
+    log_warn "safestringlib conflicts with modern macOS SDK"
     exit 0
 fi
 
-# 5. 平台适配
+# 6. 平台适配
 case "${OS_TYPE}" in
     "windows")
-        log_info "Building for Windows (MSYS2)..."
+        log_info "Building for Windows..."
         export CXX="g++"
         export CC="gcc"
         export CXXFLAGS="-g -O3 -fpermissive -static-libgcc -static-libstdc++"
@@ -41,20 +41,9 @@ case "${OS_TYPE}" in
         make -j${MAKE_JOBS} portable=1
         ;;
     
-    "macos")
-        log_info "Building for macOS x86_64..."
-        export CXX="clang++"
-        export CC="clang"
-        export CXXFLAGS="-g -O3 -fpermissive"
-        
-        make clean 2>/dev/null || true
-        make -j${MAKE_JOBS}
-        ;;
-    
     "linux")
         log_info "Building for Linux x86_64..."
         
-        # Linux x86_64
         export CXXFLAGS="-g -O3 -fpermissive -static-libgcc -static-libstdc++"
         
         # 检测 SIMD
@@ -73,7 +62,7 @@ case "${OS_TYPE}" in
         ;;
 esac
 
-# 6. 整理产物
+# 7. 整理产物
 mkdir -p "${INSTALL_PREFIX}/bin"
 
 if [ -f "bwa-mem2${EXE_EXT}" ]; then
@@ -82,7 +71,7 @@ elif [ -f "bwa-mem2" ]; then
     cp -f bwa-mem2 "${INSTALL_PREFIX}/bin/"
 fi
 
-# 7. 验证
+# 8. 验证
 FINAL_BIN="${INSTALL_PREFIX}/bin/bwa-mem2${EXE_EXT}"
 if [ -f "$FINAL_BIN" ]; then
     log_info "Build successful!"
