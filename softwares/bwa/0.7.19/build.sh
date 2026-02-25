@@ -21,11 +21,9 @@ if [ "$OS_TYPE" == "windows" ]; then
     
     # Windows 静态编译
     export CFLAGS="${CFLAGS} -static"
-    
-    # Windows 使用 gcc
     export CC="gcc"
     
-    # 创建 Windows 兼容头文件
+    # Windows 兼容头文件 - 使用 -include 注入
     cat > kutils_win.h << 'EOF'
 #ifndef KUTILS_WIN_H
 #define KUTILS_WIN_H
@@ -36,6 +34,7 @@ if [ "$OS_TYPE" == "windows" ]; then
 #include <stdio.h>
 #include <stdint.h>
 #include <time.h>
+#include <windows.h>
 
 // 替代 sys/resource.h
 typedef struct {
@@ -48,10 +47,14 @@ typedef struct {
 #endif
 
 static inline int getrusage(int who, rusage_t *r) {
-    // Windows 上简化实现
     if (r) {
-        r->tv_sec = 0;
-        r->tv_usec = 0;
+        FILETIME ft;
+        ULARGE_INTEGER uli;
+        GetSystemTimeAsFileTime(&ft);
+        uli.LowPart = ft.dwLowDateTime;
+        uli.HighPart = ft.dwHighDateTime;
+        r->tv_sec = (long)(uli.QuadPart / 10000000);
+        r->tv_usec = (long)((uli.QuadPart % 10000000) / 10);
     }
     return 0;
 }
@@ -65,18 +68,21 @@ static inline void srand48(long seed) {
     srand((unsigned int)seed);
 }
 
+// 替代 gethostname
+static inline int gethostname(char *name, size_t len) {
+    return GetComputerNameA(name, (DWORD*)&len) ? 0 : -1;
+}
+
 #endif // _WIN32
 
 #endif // KUTILS_WIN_H
 EOF
     
-    # 注入兼容头文件到源文件
-    for src in utils.c bntseq.c; do
-        if [ -f "$src" ]; then
-            # 在第一个 #include 之后插入兼容头
-            sed -i '/^#include/a #include "kutils_win.h"' "$src" 2>/dev/null || true
-        fi
-    done
+    # 将兼容头文件复制到源码目录
+    cp kutils_win.h .
+    
+    # 使用 -include 注入兼容头
+    export CFLAGS="${CFLAGS} -include kutils_win.h"
     
     # Windows 不需要 -lrt
     export LDFLAGS="-static -static-libgcc -static-libstdc++"
