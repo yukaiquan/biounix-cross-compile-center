@@ -14,17 +14,18 @@ log_info "Building bwa in: $(pwd)"
 if [ "$OS_TYPE" == "windows" ]; then
     log_info "Building for Windows (MSYS2)..."
     
-    # 创建兼容头文件
-    cat > kutils_win.h << 'EOF'
-#ifndef KUTILS_WIN_H
-#define KUTILS_WIN_H
-
+    # 直接修改源文件 - 定义宏替代缺失的头文件
+    for file in utils.c; do
+        [ -f "$file" ] || continue
+        
+        # 在文件开头添加 Windows 兼容定义
+        cat > ${file}.winpatch << 'PATCHEOF'
 #ifdef _WIN32
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
+#include <io.h>
 
 typedef struct {
     long tv_sec;
@@ -48,36 +49,50 @@ static inline void srand48(long seed) {
     srand((unsigned int)seed);
 }
 
-#include <io.h>
 #define fsync _commit
+#define HAVE_PTHREAD
+#endif
 
-#endif
-#endif
-EOF
+PATCHEOF
+        
+        # 在第一个 #include 之前插入
+        sed -i '/^#include/r '"${file}.winpatch" "$file"
+        rm -f "${file}.winpatch"
+        
+        log_info "Patched: $file"
+    done
     
-    # 修改源文件
-    for file in utils.c bntseq.c; do
+    # bntseq.c 同样处理
+    for file in bntseq.c; do
         [ -f "$file" ] || continue
-        # 在开头插入
-        sed -i '1i #include "kutils_win.h"' "$file"
-        # 注释掉 sys/resource.h
-        sed -i 's|#include <sys/resource.h>|// #include <sys/resource.h>|' "$file"
+        
+        cat > ${file}.winpatch << 'PATCHEOF'
+#ifdef _WIN32
+#include <stdlib.h>
+static inline long lrand48(void) { return (long)((rand() << 16) ^ rand()); }
+static inline void srand48(long seed) { srand((unsigned int)seed); }
+#endif
+
+PATCHEOF
+        sed -i '/^#include/r '"${file}.winpatch" "$file"
+        rm -f "${file}.winpatch"
+        
         log_info "Patched: $file"
     done
     
     # 清理
     make clean 2>/dev/null || true
     
-    # 编译 - 使用完整的 CFLAGS
+    # 编译
     log_info "Compiling..."
     make -j${MAKE_JOBS} \
         CC=gcc \
-        CFLAGS="-g -Wall -Wno-unused-function -O3 -static -DHAVE_PTHREAD -DUSE_MALLOC_WRAPPERS -I." \
+        CFLAGS="-g -Wall -O3 -static -DHAVE_PTHREAD -DUSE_MALLOC_WRAPPERS" \
         LDFLAGS="-static -static-libgcc -static-libstdc++" \
         LIBS="-lm -lz -lpthread"
         
 else
-    # 非 Windows 平台
+    # 非 Windows
     export CFLAGS="-g -Wall -Wno-unused-function -O3"
     export LIBS="-lm -lz -lpthread"
     
@@ -85,7 +100,6 @@ else
         "macos")
             log_info "Building for macOS..."
             [ -d "/opt/homebrew/opt/zlib" ] && export CFLAGS="${CFLAGS} -I/opt/homebrew/opt/zlib/include"
-            [ "${ARCH_TYPE}" == "arm64" ] && export CFLAGS="${CFLAGS} -arch arm64"
             ;;
         
         "linux")
