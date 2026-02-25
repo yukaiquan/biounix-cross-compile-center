@@ -79,7 +79,7 @@ static inline int gethostname(char *name, size_t len) {
 EOF
     
     # 将兼容头文件复制到源码目录
-    cp kutils_win.h .
+    # 已在本目录，无需复制
     
     # 使用 -include 注入兼容头
     export CFLAGS="${CFLAGS} -include kutils_win.h"
