@@ -37,13 +37,10 @@ typedef struct {
 
 static inline int getrusage(int who, rusage_t *r) {
     (void)who;
-    if (r) {
-        memset(r, 0, sizeof(rusage_t));
-    }
+    if (r) memset(r, 0, sizeof(rusage_t));
     return 0;
 }
 
-// lrand48/srand48 替代
 static inline long lrand48(void) {
     return (long)((rand() << 16) ^ rand());
 }
@@ -52,7 +49,6 @@ static inline void srand48(long seed) {
     srand((unsigned int)seed);
 }
 
-// fsync 替代
 #include <io.h>
 #define fsync _commit
 
@@ -60,11 +56,11 @@ static inline void srand48(long seed) {
 #endif
 EOF
     
-    # 找到所有需要修改的 .c 文件
+    # 找到所有需要修改的 .c 文件 - 在第一个 #include 之后插入兼容头
     for file in utils.c bntseq.c; do
         if [ -f "$file" ]; then
-            # 在文件开头添加 #include "kutils_win.h"
-            sed -i '1i #include "kutils_win.h"' "$file"
+            # 在第一个 #include 之后插入
+            sed -i '1a #include "kutils_win.h"' "$file"
             # 注释掉 sys/resource.h
             sed -i 's|#include <sys/resource.h>|// #include <sys/resource.h>|' "$file"
             log_info "Patched: $file"
@@ -74,13 +70,15 @@ EOF
     # 清理并编译
     make clean 2>/dev/null || true
     
-    WIN_CFLAGS="-g -Wall -Wno-unused-function -O3 -static -DHAVE_PTHREAD -DUSE_MALLOC_WRAPPERS -I."
+    # 直接修改 Makefile 的 CFLAGS
+    log_info "Patching Makefile..."
+    sed -i 's/^CFLAGS=.*/CFLAGS= -g -Wall -Wno-unused-function -O3 -static -DHAVE_PTHREAD -DUSE_MALLOC_WRAPPERS -I./ /' Makefile
+    
     WIN_LDFLAGS="-static -static-libgcc -static-libstdc++"
     
-    log_info "Compiling with custom CFLAGS..."
+    log_info "Compiling..."
     make -j${MAKE_JOBS} \
         CC=gcc \
-        CFLAGS="${WIN_CFLAGS}" \
         LDFLAGS="${WIN_LDFLAGS}" \
         LIBS="-lm -lz -lpthread"
         
