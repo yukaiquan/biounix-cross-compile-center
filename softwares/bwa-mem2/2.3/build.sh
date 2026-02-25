@@ -10,82 +10,79 @@ source config/platform.env
 cd "${SRC_PATH}"
 log_info "Building bwa-mem2 in: $(pwd)"
 
-# 检查是否需要初始化子模块
+# 3. 检查子模块
 if [ ! -d "ext/safestringlib" ] || [ ! -f "ext/safestringlib/Makefile" ]; then
     log_info "Initializing git submodules..."
     git submodule update --init --recursive
 fi
 
-# 3. 平台适配
+# 4. ARM 平台不支持
+if [ "$OS_TYPE" == "linux" ] && [ "$ARCH_TYPE" == "arm64" ]; then
+    log_warn "bwa-mem2 does not support Linux ARM64 (requires x86 SIMD)"
+    log_warn "Use minimap2 instead for ARM platforms"
+    exit 0
+fi
+
+if [ "$OS_TYPE" == "macos" ] && [ "$ARCH_TYPE" == "arm64" ]; then
+    log_warn "bwa-mem2 does not support macOS ARM64 (requires x86 SIMD)"
+    log_warn "Use minimap2 instead for Apple Silicon"
+    exit 0
+fi
+
+# 5. 平台适配
 case "${OS_TYPE}" in
     "windows")
         log_info "Building for Windows (MSYS2)..."
         export CXX="g++"
         export CC="gcc"
         export CXXFLAGS="-g -O3 -fpermissive -static-libgcc -static-libstdc++"
-        export LDFLAGS="-static-libgcc -static-libstdc++"
         
-        # Windows 使用基础配置
         make clean 2>/dev/null || true
         make -j${MAKE_JOBS} portable=1
         ;;
     
     "macos")
-        log_info "Building for macOS..."
+        log_info "Building for macOS x86_64..."
         export CXX="clang++"
         export CC="clang"
-        
-        # macOS 检测 CPU 类型
-        if sysctl -n machdep.cpu.brand_string 2>/dev/null | grep -q "Apple"; then
-            log_info "Using Apple Silicon (ARM64)"
-            export CXXFLAGS="-g -O3 -fpermissive -arch arm64"
-        else
-            log_info "Using Intel (x86_64)"
-            export CXXFLAGS="-g -O3 -fpermissive"
-        fi
+        export CXXFLAGS="-g -O3 -fpermissive"
         
         make clean 2>/dev/null || true
         make -j${MAKE_JOBS}
         ;;
     
     "linux")
-        log_info "Building for Linux..."
+        log_info "Building for Linux x86_64..."
         
-        # 检测 CPU 支持的 SIMD 指令集
+        # Linux x86_64
+        export CXXFLAGS="-g -O3 -fpermissive -static-libgcc -static-libstdc++"
+        
+        # 检测 SIMD
         if grep -q "avx512" /proc/cpuinfo 2>/dev/null; then
-            log_info "Using AVX512"
             export ARCH="avx512"
         elif grep -q "avx2" /proc/cpuinfo 2>/dev/null; then
-            log_info "Using AVX2"
             export ARCH="avx2"
         elif grep -q "avx" /proc/cpuinfo 2>/dev/null; then
-            log_info "Using AVX"
             export ARCH="avx"
         else
-            log_info "Using SSE4.2"
             export ARCH="sse42"
         fi
-        
-        # 静态编译
-        export CXXFLAGS="-g -O3 -fpermissive -static-libgcc -static-libstdc++"
-        export LDFLAGS="-static-libgcc -static-libstdc++"
         
         make clean 2>/dev/null || true
         make -j${MAKE_JOBS} portable=1 arch=${ARCH}
         ;;
 esac
 
-# 4. 整理产物
+# 6. 整理产物
 mkdir -p "${INSTALL_PREFIX}/bin"
 
-# bwa-mem2 输出为 bwa-mem2
 if [ -f "bwa-mem2${EXE_EXT}" ]; then
     cp -f "bwa-mem2${EXE_EXT}" "${INSTALL_PREFIX}/bin/"
 elif [ -f "bwa-mem2" ]; then
     cp -f bwa-mem2 "${INSTALL_PREFIX}/bin/"
 fi
 
-# 5. 验证
+# 7. 验证
 FINAL_BIN="${INSTALL_PREFIX}/bin/bwa-mem2${EXE_EXT}"
 if [ -f "$FINAL_BIN" ]; then
     log_info "Build successful!"
