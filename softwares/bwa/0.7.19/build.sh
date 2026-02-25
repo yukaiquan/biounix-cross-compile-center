@@ -10,52 +10,65 @@ source config/platform.env
 cd "${SRC_PATH}"
 log_info "Building bwa in: $(pwd)"
 
-# 3. 编译参数（基于原版 Makefile）
+# 3. 基础编译参数（基于原版 Makefile）
 export CFLAGS="-g -Wall -Wno-unused-function -O3"
-export LDFLAGS="-lm -lz -lpthread"
+export DFLAGS="-DHAVE_PTHREAD -DUSE_MALLOC_WRAPPERS"
+export LIBS="-lm -lz -lpthread"
 
 # 4. 平台适配
 case "${OS_TYPE}" in
     "windows")
         log_info "Building for Windows (MSYS2)..."
+        
+        # Windows 静态编译
         export CFLAGS="${CFLAGS} -static"
-        export LDFLAGS="${LDFLAGS} -static-libgcc -static-libstdc++"
         
         # Windows 使用 gcc
         export CC="gcc"
+        
+        # Windows 不需要 -lrt
+        # 使用静态链接
+        export LDFLAGS="-static -static-libgcc -static-libstdc++"
         ;;
     
     "macos")
         log_info "Building for macOS..."
-        # macOS 使用 clang
-        export CC="clang"
         
-        # 链接 zlib（Homebrew）
-        if [ -d "/opt/homebrew/opt/zlib" ]; then
-            export CFLAGS="${CFLAGS} -I/opt/homebrew/opt/zlib/include"
-            export LDFLAGS="${LDFLAGS} -L/opt/homebrew/opt/zlib/lib"
-        elif [ -d "/usr/local/opt/zlib" ]; then
-            export CFLAGS="${CFLAGS} -I/usr/local/opt/zlib/include"
-            export LDFLAGS="${LDFLAGS} -L/usr/local/opt/zlib/lib"
+        # macOS 使用 clang
+        if command -v clang &>/dev/null; then
+            export CC="clang"
+        else
+            export CC="gcc"
         fi
         
-        # ARM64 需要特殊处理
+        # macOS 不需要 -lrt
+        
+        # 链接 zlib（Homebrew 或系统）
+        if [ -d "/opt/homebrew/opt/zlib" ]; then
+            export CFLAGS="${CFLAGS} -I/opt/homebrew/opt/zlib/include"
+            export LDFLAGS="-L/opt/homebrew/opt/zlib/lib"
+        elif [ -d "/usr/local/opt/zlib" ]; then
+            export CFLAGS="${CFLAGS} -I/usr/local/opt/zlib/include"
+            export LDFLAGS="-L/usr/local/opt/zlib/lib"
+        fi
+        
+        # ARM64 (Apple Silicon) 优化
         if [ "${ARCH_TYPE}" == "arm64" ]; then
-            log_info "Building for macOS ARM64 (Apple Silicon)"
-            # Makefile 会在检测到 ARM64 时自动使用合适参数
+            log_info "Detected ARM64, adding optimization flags"
+            export CFLAGS="${CFLAGS} -arch arm64"
         fi
         ;;
     
     "linux")
         log_info "Building for Linux..."
         
-        # Linux 添加 -lrt（时钟函数）
-        export LDFLAGS="${LDFLAGS} -lrt"
+        # Linux 需要 -lrt（时钟函数）
+        export LIBS="${LIBS} -lrt"
         
         # 静态链接
-        export LDFLAGS="${LDFLAGS} -static"
+        export LDFLAGS="-static"
         
-        # 根据编译器选择
+        # 选择编译器
         if command -v clang &>/dev/null; then
             export CC="clang"
             log_info "Using clang compiler"
@@ -75,16 +88,17 @@ case "${OS_TYPE}" in
         ;;
 esac
 
-# 导出环境变量
-export CFLAGS
-export LDFLAGS
-
 # 5. 编译
+log_info "Compiler: ${CC}"
+log_info "CFLAGS: ${CFLAGS}"
+log_info "LIBS: ${LIBS}"
+log_info "LDFLAGS: ${LDFLAGS}"
+
 log_info "Running: make clean"
 make clean 2>/dev/null || true
 
-log_info "Running: make -j${MAKE_JOBS} CC=${CC}"
-make -j${MAKE_JOBS} CC="${CC}"
+log_info "Running: make -j${MAKE_JOBS}"
+make -j${MAKE_JOBS}
 
 # 6. 整理产物
 mkdir -p "${INSTALL_PREFIX}/bin"
