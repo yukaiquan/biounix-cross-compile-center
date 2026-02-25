@@ -14,26 +14,68 @@ log_info "Building bwa in: $(pwd)"
 if [ "$OS_TYPE" == "windows" ]; then
     log_info "Building for Windows (MSYS2)..."
     
-    # 方法1: 修改源文件，替换 sys/resource.h
-    log_info "Patching source files for Windows..."
+    # 创建完整的 Windows 兼容头文件
+    cat > kutils_win.h << 'EOF'
+#ifndef KUTILS_WIN_H
+#define KUTILS_WIN_H
+
+#ifdef _WIN32
+
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/types.h>
+
+// sys/resource.h 替代
+typedef struct {
+    long tv_sec;
+    long tv_usec;
+    long tv_maxrss;
+    long ti_unused;
+    long ti_ru.ru_utime.tv_sec;
+    long ti_ru.ru_utime.tv_usec;
+    long ti_ru.ru_stime.tv_sec;
+    long ti_ru.ru_stime.tv_usec;
+} rusage_t;
+
+#define RUSAGE_SELF 0
+
+static inline int getrusage(int who, rusage_t *r) {
+    (void)who;
+    if (r) {
+        memset(r, 0, sizeof(rusage_t));
+    }
+    return 0;
+}
+
+// lrand48/srand48 替代
+static inline long lrand48(void) {
+    return (long)((rand() << 16) ^ rand());
+}
+
+static inline void srand48(long seed) {
+    srand((unsigned int)seed);
+}
+
+// fsync 替代
+#include <io.h>
+#define fsync _commit
+
+#endif
+#endif
+EOF
     
-    # 备份并替换 sys/resource.h
-    for file in utils.c bntseq.c; do
-        if [ -f "$file" ]; then
-            # 注释掉 sys/resource.h 并添加兼容头
-            sed -i 's|#include <sys/resource.h>|// #include <sys/resource.h>  // removed for Windows|g' "$file"
-        fi
-    done
+    # 修改 utils.c - 添加兼容头
+    sed -i '/^#include "bwa.h"/a #include "kutils_win.h"' utils.c
+    sed -i 's|#include <sys/resource.h>|// #include <sys/resource.h>|' utils.c
     
-    # 添加兼容头到 utils.c 开头（在第一个 #include 之后）
-    sed -i '/^#include/a #include <stdlib.h>' utils.c
-    sed -i '/^#include/a #include <time.h>' utils.c
+    # 修改 bntseq.c - 添加兼容头
+    sed -i '/^#include "bntseq.h"/a #include "kutils_win.h"' bntseq.c
     
-    # 清理并使用自定义 CFLAGS 编译
+    # 清理并编译
     make clean 2>/dev/null || true
     
-    # Windows CFLAGS
-    WIN_CFLAGS="-g -Wall -Wno-unused-function -O3 -static -DHAVE_PTHREAD -DUSE_MALLOC_WRAPPERS"
+    WIN_CFLAGS="-g -Wall -Wno-unused-function -O3 -static -DHAVE_PTHREAD -DUSE_MALLOC_WRAPPERS -I."
     WIN_LDFLAGS="-static -static-libgcc -static-libstdc++"
     
     log_info "Compiling with custom CFLAGS..."
@@ -44,7 +86,7 @@ if [ "$OS_TYPE" == "windows" ]; then
         LIBS="-lm -lz -lpthread"
         
 else
-    # 4. 非 Windows 平台
+    # 非 Windows 平台
     export CFLAGS="-g -Wall -Wno-unused-function -O3"
     export LIBS="-lm -lz -lpthread"
     
@@ -84,11 +126,11 @@ else
     make -j${MAKE_JOBS}
 fi
 
-# 5. 整理产物
+# 4. 整理产物
 mkdir -p "${INSTALL_PREFIX}/bin"
 cp -f bwa${EXE_EXT} "${INSTALL_PREFIX}/bin/"
 
-# 6. 验证
+# 5. 验证
 FINAL_BIN="${INSTALL_PREFIX}/bin/bwa${EXE_EXT}"
 if [ -f "$FINAL_BIN" ]; then
     log_info "Build successful!"
