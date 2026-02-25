@@ -14,7 +14,7 @@ log_info "Building bwa in: $(pwd)"
 if [ "$OS_TYPE" == "windows" ]; then
     log_info "Building for Windows (MSYS2)..."
     
-    # 创建完整的 Windows 兼容头文件
+    # 创建兼容头文件
     cat > kutils_win.h << 'EOF'
 #ifndef KUTILS_WIN_H
 #define KUTILS_WIN_H
@@ -26,7 +26,6 @@ if [ "$OS_TYPE" == "windows" ]; then
 #include <string.h>
 #include <sys/types.h>
 
-// sys/resource.h 替代
 typedef struct {
     long tv_sec;
     long tv_usec;
@@ -56,30 +55,25 @@ static inline void srand48(long seed) {
 #endif
 EOF
     
-    # 找到所有需要修改的 .c 文件 - 在第一个 #include 之后插入兼容头
+    # 修改源文件
     for file in utils.c bntseq.c; do
-        if [ -f "$file" ]; then
-            # 在第一个 #include 之后插入
-            sed -i '1a #include "kutils_win.h"' "$file"
-            # 注释掉 sys/resource.h
-            sed -i 's|#include <sys/resource.h>|// #include <sys/resource.h>|' "$file"
-            log_info "Patched: $file"
-        fi
+        [ -f "$file" ] || continue
+        # 在开头插入
+        sed -i '1i #include "kutils_win.h"' "$file"
+        # 注释掉 sys/resource.h
+        sed -i 's|#include <sys/resource.h>|// #include <sys/resource.h>|' "$file"
+        log_info "Patched: $file"
     done
     
-    # 清理并编译
+    # 清理
     make clean 2>/dev/null || true
     
-    # 直接修改 Makefile 的 CFLAGS
-    log_info "Patching Makefile..."
-    sed -i 's/^CFLAGS=.*/CFLAGS= -g -Wall -Wno-unused-function -O3 -static -DHAVE_PTHREAD -DUSE_MALLOC_WRAPPERS -I./ /' Makefile
-    
-    WIN_LDFLAGS="-static -static-libgcc -static-libstdc++"
-    
+    # 编译 - 使用完整的 CFLAGS
     log_info "Compiling..."
     make -j${MAKE_JOBS} \
         CC=gcc \
-        LDFLAGS="${WIN_LDFLAGS}" \
+        CFLAGS="-g -Wall -Wno-unused-function -O3 -static -DHAVE_PTHREAD -DUSE_MALLOC_WRAPPERS -I." \
+        LDFLAGS="-static -static-libgcc -static-libstdc++" \
         LIBS="-lm -lz -lpthread"
         
 else
@@ -90,32 +84,14 @@ else
     case "${OS_TYPE}" in
         "macos")
             log_info "Building for macOS..."
-            if command -v clang &>/dev/null; then
-                export CC="clang"
-            else
-                export CC="gcc"
-            fi
-            
-            if [ -d "/opt/homebrew/opt/zlib" ]; then
-                export CFLAGS="${CFLAGS} -I/opt/homebrew/opt/zlib/include"
-                export LDFLAGS="-L/opt/homebrew/opt/zlib/lib"
-            fi
-            
-            if [ "${ARCH_TYPE}" == "arm64" ]; then
-                export CFLAGS="${CFLAGS} -arch arm64"
-            fi
+            [ -d "/opt/homebrew/opt/zlib" ] && export CFLAGS="${CFLAGS} -I/opt/homebrew/opt/zlib/include"
+            [ "${ARCH_TYPE}" == "arm64" ] && export CFLAGS="${CFLAGS} -arch arm64"
             ;;
         
         "linux")
             log_info "Building for Linux..."
             export LIBS="${LIBS} -lrt"
             export LDFLAGS="-static"
-            
-            if command -v clang &>/dev/null; then
-                export CC="clang"
-            else
-                export CC="gcc"
-            fi
             ;;
     esac
     
