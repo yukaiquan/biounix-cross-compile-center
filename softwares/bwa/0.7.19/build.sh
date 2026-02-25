@@ -14,7 +14,7 @@ log_info "Building bwa in: $(pwd)"
 if [ "$OS_TYPE" == "windows" ]; then
     log_info "Building for Windows (MSYS2)..."
     
-    # Windows 兼容头文件
+    # Windows 兼容头文件 - 简化版
     cat > kutils_win.h << 'EOF'
 #ifndef KUTILS_WIN_H
 #define KUTILS_WIN_H
@@ -23,10 +23,8 @@ if [ "$OS_TYPE" == "windows" ]; then
 
 #include <stdlib.h>
 #include <stdio.h>
-#include <stdint.h>
-#include <time.h>
-#include <windows.h>
 
+// sys/resource.h 替代
 typedef struct {
     long tv_sec;
     long tv_usec;
@@ -37,18 +35,15 @@ typedef struct {
 #endif
 
 static inline int getrusage(int who, rusage_t *r) {
+    (void)who;
     if (r) {
-        FILETIME ft;
-        ULARGE_INTEGER uli;
-        GetSystemTimeAsFileTime(&ft);
-        uli.LowPart = ft.dwLowDateTime;
-        uli.HighPart = ft.dwHighDateTime;
-        r->tv_sec = (long)(uli.QuadPart / 10000000);
-        r->tv_usec = (long)((uli.QuadPart % 10000000) / 10);
+        r->tv_sec = 0;
+        r->tv_usec = 0;
     }
     return 0;
 }
 
+// lrand48/srand48 替代
 static inline long lrand48(void) {
     return (long)((rand() << 16) ^ rand());
 }
@@ -56,13 +51,6 @@ static inline long lrand48(void) {
 static inline void srand48(long seed) {
     srand((unsigned int)seed);
 }
-
-static inline int gethostname(char *name, size_t len) {
-    return GetComputerNameA(name, (DWORD*)&len) ? 0 : -1;
-}
-
-#define lrand48 lrand48
-#define srand48 srand48
 
 #endif
 #endif
