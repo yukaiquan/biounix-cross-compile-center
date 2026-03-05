@@ -31,48 +31,278 @@ fi
 if [ "$OS_TYPE" == "windows" ]; then
     log_info "Applying Windows compatibility patches..."
     
-    # 补丁1: 替换 sys/resource.h 为条件编译
-    if grep -q '#include <sys/resource.h>' "${SRC_PATH}/src/utils/utils.h" 2>/dev/null; then
-        log_info "Patching utils.h for Windows..."
-        # 替换 sys/resource.h 相关内容
+    # 创建 compat.h 头文件
+    COMPAT_H="${SRC_PATH}/src/utils/compat.h"
+    log_info "Creating ${COMPAT_H}..."
+    
+    cat > "${COMPAT_H}" << 'COMPAT_EOF'
+/*
+ * MegaHit Windows Compatibility Header
+ * Provides Windows equivalents for POSIX functions
+ */
+
+#ifndef MEGAHIT_COMPAT_H
+#define MEGAHIT_COMPAT_H
+
+#ifdef _WIN32
+
+#include <windows.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <psapi.h>
+
+// Define POSIX types
+typedef int pid_t;
+typedef unsigned int u_int;
+typedef unsigned long ulong;
+typedef long off_t;
+
+// getpagesize - Windows equivalent
+static inline long getpagesize(void) {
+    SYSTEM_INFO sys_info;
+    GetSystemInfo(&sys_info);
+    return sys_info.dwPageSize;
+}
+
+// getrusage stub
+struct rusage {
+    long ru_maxrss;
+    long ru_ixrss;
+    long ru_idrss;
+    long ru_isrss;
+    long ru_minflt;
+    long ru_majflt;
+    long ru_nswap;
+    long ru_inblock;
+    long ru_oublock;
+    long ru_msgsnd;
+    long ru_msgrcv;
+    long ru_nsignals;
+    long ru_nvcsw;
+    long ru_nivcsw;
+};
+
+#define RUSAGE_SELF 0
+
+static inline int getrusage(int who, struct rusage *usage) {
+    if (usage) {
+        memset(usage, 0, sizeof(struct rusage));
+    }
+    return 0;
+}
+
+// sysinfo stub
+struct sysinfo {
+    long uptime;
+    unsigned long loads[3];
+    unsigned long totalram;
+    unsigned long freeram;
+    unsigned long sharedram;
+    unsigned long bufferram;
+    unsigned long totalswap;
+    unsigned long freeswap;
+    unsigned short procs;
+    unsigned short _pad0;
+    unsigned long totalhigh;
+    unsigned long freehigh;
+    unsigned int mem_unit;
+    char _f[20];
+};
+
+static inline int sysinfo(struct sysinfo *info) {
+    if (!info) return -1;
+    memset(info, 0, sizeof(struct sysinfo));
+    MEMORYSTATUSEX mem;
+    mem.dwLength = sizeof(mem);
+    if (GlobalMemoryStatusEx(&mem)) {
+        info->totalram = mem.ullTotalPhys / 1024;
+        info->freeram = mem.ullAvailPhys / 1024;
+        info->mem_unit = 1024;
+    }
+    return 0;
+}
+
+// stat structures
+struct stat {
+    _dev_t st_dev;
+    _ino_t st_ino;
+    unsigned short st_mode;
+    short st_nlink;
+    short st_uid;
+    short st_gid;
+    int _pad0;
+    _dev_t st_rdev;
+    _off_t st_size;
+    long st_atime;
+    long st_mtime;
+    long st_ctime;
+    long st_blksize;
+    long st_blocks;
+};
+
+#define S_IFMT  0170000
+#define S_IFDIR 0040000
+#define S_IFREG 0100000
+
+// fstat
+static inline int fstat(int fd, struct stat *st) {
+    return _fstat(fd, st);
+}
+
+// isatty
+static inline int isatty(int fd) {
+    return _isatty(fd);
+}
+
+// sleep (in seconds)
+static inline unsigned int sleep(unsigned int seconds) {
+    Sleep(seconds * 1000);
+    return 0;
+}
+
+// usleep
+static inline int usleep(unsigned int usec) {
+    Sleep(usec / 1000);
+    return 0;
+}
+
+// strcasecmp
+static inline int strcasecmp(const char *s1, const char *s2) {
+    return _stricmp(s1, s2);
+}
+
+// strncasecmp  
+static inline int strncasecmp(const char *s1, const char *s2, size_t n) {
+    return _strnicmp(s1, s2, n);
+}
+
+// open/close/read/write wrappers
+#define O_RDONLY _O_RDONLY
+#define O_WRONLY _O_WRONLY
+#define O_CREAT _O_CREAT
+#define O_RDWR _O_RDWR
+
+static inline int open(const char *path, int flags, ...) {
+    int mode = 0;
+    va_list args;
+    va_start(args, flags);
+    mode = va_arg(args, int);
+    va_end(args);
+    return _open(path, flags, mode);
+}
+
+static inline int close(int fd) {
+    return _close(fd);
+}
+
+static inline int read(int fd, void *buf, unsigned int count) {
+    return _read(fd, buf, count);
+}
+
+static inline int write(int fd, const void *buf, unsigned int count) {
+    return _write(fd, buf, count);
+}
+
+// lseek
+static inline off_t lseek(int fd, off_t offset, int whence) {
+    return _lseek(fd, offset, whence);
+}
+
+// getcwd
+static inline char *getcwd(char *buf, size_t size) {
+    return _getcwd(buf, size);
+}
+
+// unlink
+static inline int unlink(const char *path) {
+    return _unlink(path);
+}
+
+// rmdir
+static inline int rmdir(const char *path) {
+    return _rmdir(path);
+}
+
+// mkdir
+static inline int mkdir(const char *path, int mode) {
+    return _mkdir(path);
+}
+
+// getpid
+static inline pid_t getpid(void) {
+    return GetCurrentProcessId();
+}
+
+// getuid
+static inline int getuid(void) {
+    return 0;
+}
+
+// geteuid
+static inline int geteuid(void) {
+    return 0;
+}
+
+#endif // _WIN32
+
+#endif // MEGAHIT_COMPAT_H
+COMPAT_EOF
+
+    # 补丁 utils.h - 包含 compat.h
+    log_info "Patching src/utils/utils.h..."
+    UTILS_H="${SRC_PATH}/src/utils/utils.h"
+    
+    # 备份并替换
+    if grep -q '#include <sys/resource.h>' "${UTILS_H}" 2>/dev/null; then
+        # 使用 sed 替换头部 includes
         if command -v gsed &> /dev/null; then
-            gsed -i 's/#include <sys\/resource.h>/#ifdef _WIN32\n#include <windows.h>\nstatic int getrusage(int who, void *rusage) { return 0; }\n#else\n#include <sys\/resource.h>\n#endif/' "${SRC_PATH}/src/utils/utils.h"
+            gsed -i 's/#include <fcntl.h>/#include "compat.h"\n\n#ifndef _WIN32\n#include <fcntl.h>\n#include <sys\/resource.h>\n#include <sys\/time.h>\n#include <unistd.h>\n#endif/' "${UTILS_H}"
         else
-            sed -i '' 's/#include <sys\/resource.h>/#ifdef _WIN32\n#include <windows.h>\nstatic int getrusage(int who, void *rusage) { return 0; }\n#else\n#include <sys\/resource.h>\n#endif/' "${SRC_PATH}/src/utils/utils.h" 2>/dev/null || \
-            sed -i 's/#include <sys\/resource.h>/#ifdef _WIN32\n#include <windows.h>\nstatic int getrusage(int who, void *rusage) { return 0; }\n#else\n#include <sys\/resource.h>\n#endif/' "${SRC_PATH}/src/utils/utils.h"
+            sed -i '' 's/#include <fcntl.h>/#include "compat.h"\n\n#ifndef _WIN32\n#include <fcntl.h>\n#include <sys\/resource.h>\n#include <sys\/time.h>\n#include <unistd.h>\n#endif/' "${UTILS_H}" 2>/dev/null || \
+            sed -i 's/#include <fcntl.h>/#include "compat.h"\n\n#ifndef _WIN32\n#include <fcntl.h>\n#include <sys\/resource.h>\n#include <sys\/time.h>\n#include <unistd.h>\n#endif/' "${UTILS_H}"
         fi
     fi
     
-    # 补丁2: 替换 sys/time.h
-    if grep -q '#include <sys/time.h>' "${SRC_PATH}/src/utils/utils.h" 2>/dev/null; then
-        log_info "Patching sys/time.h for Windows..."
-        if command -v gsed &> /dev/null; then
-            gsed -i 's/#include <sys\/time.h>/#ifndef _WIN32\n#include <sys\/time.h>\n#endif/' "${SRC_PATH}/src/utils/utils.h"
-        else
-            sed -i '' 's/#include <sys\/time.h>/#ifndef _WIN32\n#include <sys\/time.h>\n#endif/' "${SRC_PATH}/src/utils/utils.h" 2>/dev/null || \
-            sed -i 's/#include <sys\/time.h>/#ifndef _WIN32\n#include <sys\/time.h>\n#endif/' "${SRC_PATH}/src/utils/utils.h"
-        fi
-    fi
+    # 补丁 parallel_hashmap/meminfo.h - 添加 getpagesize
+    MEMINFO_H="${SRC_PATH}/src/parallel_hashmap/meminfo.h"
+    log_info "Patching src/parallel_hashmap/meminfo.h..."
     
-    # 补丁3: unistd.h
-    if grep -q '#include <unistd.h>' "${SRC_PATH}/src/utils/utils.h" 2>/dev/null; then
-        log_info "Patching unistd.h for Windows..."
+    # 检查是否已有 getpagesize 定义
+    if ! grep -q "getpagesize.*Windows" "${MEMINFO_H}" 2>/dev/null; then
+        # 在 SPP_WIN 部分添加 getpagesize
         if command -v gsed &> /dev/null; then
-            gsed -i 's/#include <unistd.h>/#ifndef _WIN32\n#include <unistd.h>\n#endif/' "${SRC_PATH}/src/utils/utils.h"
+            gsed -i '/#ifdef SPP_WIN/,/MEMORYSTATUSEX mem;/{
+                /#include <Psapi.h>/a\
+\
+    // getpagesize for Windows\
+    static inline long getpagesize(void) {\
+        SYSTEM_INFO sys_info;\
+        GetSystemInfo(\&sys_info);\
+        return sys_info.dwPageSize;\
+    }
+            }' "${MEMINFO_H}"
         else
-            sed -i '' 's/#include <unistd.h>/#ifndef _WIN32\n#include <unistd.h>\n#endif/' "${SRC_PATH}/src/utils/utils.h" 2>/dev/null || \
-            sed -i 's/#include <unistd.h>/#ifndef _WIN32\n#include <unistd.h>\n#endif/' "${SRC_PATH}/src/utils/utils.h"
+            sed -i '' '/#ifdef SPP_WIN/,/MEMORYSTATUSEX mem;/{
+                /#include <Psapi.h>/a\
+\
+    // getpagesize for Windows\
+    static inline long getpagesize(void) {\
+        SYSTEM_INFO sys_info;\
+        GetSystemInfo(\&sys_info);\
+        return sys_info.dwPageSize;\
+    }
+            }' "${MEMINFO_H}" 2>/dev/null || true
         fi
     fi
 fi
 
-# 5. 创建构建目录
+# 6. 创建构建目录
 cd "${SRC_PATH}"
 rm -rf build
 mkdir -p build
 cd build
 
-# 6. 配置编译选项
+# 7. 配置编译选项
 if [ "$OS_TYPE" == "linux" ]; then
     export CC="gcc"
     export CXX="g++"
@@ -98,33 +328,24 @@ elif [ "$OS_TYPE" == "macos" ]; then
         -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}"
 
 elif [ "$OS_TYPE" == "windows" ]; then
-    # Windows 不支持 megahit（依赖 POSIX 头文件如 sys/resource.h）
-    # 建议：使用 WSL 或跳过 Windows 构建
-    log_err "megahit is not supported on Windows (requires POSIX headers like sys/resource.h)"
-    log_err "Please build on Linux/macOS or use WSL"
-    
-    # 尝试构建但不保证成功
-    log_warn "Attempting build anyway..."
-    
+    # Windows MSYS2 环境
+    # 使用系统默认的编译器 (gcc from mingw)
     cmake .. \
         -G "Unix Makefiles" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}" \
-        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 || {
-        log_err "Windows build failed as expected. Use Linux/macOS instead."
-        exit 1
-    }
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 fi
 
-# 7. 编译
+# 8. 编译
 log_info "Compiling megahit..."
 make -j${MAKE_JOBS}
 
-# 8. 安装
+# 9. 安装
 log_info "Installing..."
 make install
 
-# 9. 验证
+# 10. 验证
 FINAL_BIN="${INSTALL_PREFIX}/bin/megahit${EXE_EXT}"
 if [ -f "$FINAL_BIN" ]; then
     log_info "Build successful!"
