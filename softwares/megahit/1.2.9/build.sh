@@ -59,14 +59,22 @@ elif [ "$OS_TYPE" == "macos" ]; then
         -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}"
 
 elif [ "$OS_TYPE" == "windows" ]; then
-    # Windows MSYS2 环境
-    # 使用系统默认的编译器 (gcc from mingw)
+    # Windows 不支持 megahit（依赖 POSIX 头文件如 sys/resource.h）
+    # 建议：使用 WSL 或跳过 Windows 构建
+    log_err "megahit is not supported on Windows (requires POSIX headers like sys/resource.h)"
+    log_err "Please build on Linux/macOS or use WSL"
+    
+    # 尝试构建但不保证成功
+    log_warn "Attempting build anyway..."
+    
     cmake .. \
         -G "Unix Makefiles" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}" \
-        -DSTATIC_BUILD=ON \
-        -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 || {
+        log_err "Windows build failed as expected. Use Linux/macOS instead."
+        exit 1
+    }
 fi
 
 # 7. 编译

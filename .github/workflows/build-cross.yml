@@ -101,6 +101,13 @@ jobs:
       # 关键改动：强制将矩阵中的系统类型写进环境变量，覆盖脚本的自测
       - name: Prepare Environment
         run: |
+          # 跳过 megahit 的 Windows 构建（不兼容）
+          if [[ "${{ matrix.os-type }}" == "windows" ]] && [[ "${{ inputs.software }}" == "megahit" ]]; then
+            echo "SKIP_WINDOWS=true" >> $GITHUB_ENV
+          else
+            echo "SKIP_WINDOWS=false" >> $GITHUB_ENV
+          fi
+          
           echo "S_NAME=${{ inputs.software }}" >> $GITHUB_ENV
           echo "S_VER=${{ inputs.version }}" >> $GITHUB_ENV
           echo "OS_TYPE=${{ matrix.os-type }}" >> $GITHUB_ENV
@@ -131,6 +138,13 @@ jobs:
           # 3. 写入当前目录下的临时文件
           $posixPath | Out-File -FilePath "ldc_full_path.txt" -Encoding ascii
           Write-Host "LDC Absolute Path Found: $posixPath"
+
+      - name: Skip Windows for incompatible software
+        run: |
+          if [ "$SKIP_WINDOWS" == "true" ]; then
+            echo "Skipping Windows build for $S_NAME (not supported)"
+            exit 0
+          fi
 
       - name: Install Dependencies
         run: bash scripts/install_deps.sh ${{ env.S_NAME }} ${{ env.S_VER }}
