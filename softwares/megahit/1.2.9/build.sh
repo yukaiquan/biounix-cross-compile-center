@@ -59,20 +59,13 @@ elif [ "$OS_TYPE" == "macos" ]; then
         -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}"
 
 elif [ "$OS_TYPE" == "windows" ]; then
-    export CC="clang"
-    export CXX="clang++"
-    export CMAKE_CXX_FLAGS="-O3 -DNDEBUG -std=c++11"
-    export CMAKE_EXE_LINKER_FLAGS="-static"
-    
     # Windows MSYS2 环境
-    # 添加 -DCMAKE_POLICY_VERSION_MINIMUM=3.5 绕过版本检查
+    # 使用系统默认的编译器 (gcc from mingw)
     cmake .. \
-        -G "MinGW Makefiles" \
+        -G "Unix Makefiles" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}" \
         -DSTATIC_BUILD=ON \
-        -DCMAKE_C_COMPILER=clang \
-        -DCMAKE_CXX_COMPILER=clang++ \
         -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 fi
 
