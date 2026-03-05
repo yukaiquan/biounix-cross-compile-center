@@ -52,13 +52,15 @@ elif [ "$OS_TYPE" == "windows" ]; then
     export CMAKE_EXE_LINKER_FLAGS="-static"
     
     # Windows MSYS2 环境
+    # 添加 -DCMAKE_POLICY_VERSION_MINIMUM=3.5 绕过版本检查
     cmake .. \
         -G "MinGW Makefiles" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}" \
         -DSTATIC_BUILD=ON \
         -DCMAKE_C_COMPILER=clang \
-        -DCMAKE_CXX_COMPILER=clang++
+        -DCMAKE_CXX_COMPILER=clang++ \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 fi
 
 # 6. 编译
