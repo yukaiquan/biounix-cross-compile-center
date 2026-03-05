@@ -27,6 +27,45 @@ if grep -q "cmake_minimum_required.*\.\.\." "${SRC_PATH}/CMakeLists.txt" 2>/dev/
     fi
 fi
 
+# 5. Windows 兼容性补丁
+if [ "$OS_TYPE" == "windows" ]; then
+    log_info "Applying Windows compatibility patches..."
+    
+    # 补丁1: 替换 sys/resource.h 为条件编译
+    if grep -q '#include <sys/resource.h>' "${SRC_PATH}/src/utils/utils.h" 2>/dev/null; then
+        log_info "Patching utils.h for Windows..."
+        # 替换 sys/resource.h 相关内容
+        if command -v gsed &> /dev/null; then
+            gsed -i 's/#include <sys\/resource.h>/#ifdef _WIN32\n#include <windows.h>\nstatic int getrusage(int who, void *rusage) { return 0; }\n#else\n#include <sys\/resource.h>\n#endif/' "${SRC_PATH}/src/utils/utils.h"
+        else
+            sed -i '' 's/#include <sys\/resource.h>/#ifdef _WIN32\n#include <windows.h>\nstatic int getrusage(int who, void *rusage) { return 0; }\n#else\n#include <sys\/resource.h>\n#endif/' "${SRC_PATH}/src/utils/utils.h" 2>/dev/null || \
+            sed -i 's/#include <sys\/resource.h>/#ifdef _WIN32\n#include <windows.h>\nstatic int getrusage(int who, void *rusage) { return 0; }\n#else\n#include <sys\/resource.h>\n#endif/' "${SRC_PATH}/src/utils/utils.h"
+        fi
+    fi
+    
+    # 补丁2: 替换 sys/time.h
+    if grep -q '#include <sys/time.h>' "${SRC_PATH}/src/utils/utils.h" 2>/dev/null; then
+        log_info "Patching sys/time.h for Windows..."
+        if command -v gsed &> /dev/null; then
+            gsed -i 's/#include <sys\/time.h>/#ifndef _WIN32\n#include <sys\/time.h>\n#endif/' "${SRC_PATH}/src/utils/utils.h"
+        else
+            sed -i '' 's/#include <sys\/time.h>/#ifndef _WIN32\n#include <sys\/time.h>\n#endif/' "${SRC_PATH}/src/utils/utils.h" 2>/dev/null || \
+            sed -i 's/#include <sys\/time.h>/#ifndef _WIN32\n#include <sys\/time.h>\n#endif/' "${SRC_PATH}/src/utils/utils.h"
+        fi
+    fi
+    
+    # 补丁3: unistd.h
+    if grep -q '#include <unistd.h>' "${SRC_PATH}/src/utils/utils.h" 2>/dev/null; then
+        log_info "Patching unistd.h for Windows..."
+        if command -v gsed &> /dev/null; then
+            gsed -i 's/#include <unistd.h>/#ifndef _WIN32\n#include <unistd.h>\n#endif/' "${SRC_PATH}/src/utils/utils.h"
+        else
+            sed -i '' 's/#include <unistd.h>/#ifndef _WIN32\n#include <unistd.h>\n#endif/' "${SRC_PATH}/src/utils/utils.h" 2>/dev/null || \
+            sed -i 's/#include <unistd.h>/#ifndef _WIN32\n#include <unistd.h>\n#endif/' "${SRC_PATH}/src/utils/utils.h"
+        fi
+    fi
+fi
+
 # 5. 创建构建目录
 cd "${SRC_PATH}"
 rm -rf build
