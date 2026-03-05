@@ -248,20 +248,55 @@ static inline int geteuid(void) {
 #endif // MEGAHIT_COMPAT_H
 COMPAT_EOF
 
-    # 补丁 utils.h - 包含 compat.h
+    # 补丁 utils.h - 直接写入修补后的版本
     log_info "Patching src/utils/utils.h..."
     UTILS_H="${SRC_PATH}/src/utils/utils.h"
     
-    # 备份并替换
-    if grep -q '#include <sys/resource.h>' "${UTILS_H}" 2>/dev/null; then
-        # 使用 sed 替换头部 includes
-        if command -v gsed &> /dev/null; then
-            gsed -i 's/#include <fcntl.h>/#include "compat.h"\n\n#ifndef _WIN32\n#include <fcntl.h>\n#include <sys\/resource.h>\n#include <sys\/time.h>\n#include <unistd.h>\n#endif/' "${UTILS_H}"
-        else
-            sed -i '' 's/#include <fcntl.h>/#include "compat.h"\n\n#ifndef _WIN32\n#include <fcntl.h>\n#include <sys\/resource.h>\n#include <sys\/time.h>\n#include <unistd.h>\n#endif/' "${UTILS_H}" 2>/dev/null || \
-            sed -i 's/#include <fcntl.h>/#include "compat.h"\n\n#ifndef _WIN32\n#include <fcntl.h>\n#include <sys\/resource.h>\n#include <sys\/time.h>\n#include <unistd.h>\n#endif/' "${UTILS_H}"
-        fi
-    fi
+    cat > "${UTILS_H}" << 'UTILS_EOF'
+/*
+ *  MEGAHIT
+ *  Copyright (C) 2014 - 2015 The University of Hong Kong & L3 Bioinformatics
+ * Limited
+ *
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation, either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+/* contact: Dinghua Li <dhli@cs.hku.hk> */
+
+#ifndef MEGAHIT_UTILS_H
+#define MEGAHIT_UTILS_H
+
+// Include Windows compatibility header first
+#include "compat.h"
+
+#ifndef _WIN32
+#include <fcntl.h>
+#include <sys/resource.h>
+#include <sys/time.h>
+#include <unistd.h>
+#endif
+
+#include <cstdarg>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <istream>
+
+#include "pprintpp/pprintpp.hpp"
+
+UTILS_EOF
     
     # 补丁 parallel_hashmap/meminfo.h - 添加 getpagesize
     MEMINFO_H="${SRC_PATH}/src/parallel_hashmap/meminfo.h"
