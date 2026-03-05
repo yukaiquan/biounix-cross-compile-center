@@ -15,13 +15,25 @@ if [ "$NEEDS_SUBMODULES" = "true" ]; then
     git submodule update --init --recursive
 fi
 
-# 4. 创建构建目录
+# 4. 修复 CMakeLists.txt 版本要求（如果有 range 语法）
+if grep -q "cmake_minimum_required.*\.\.\." "${SRC_PATH}/CMakeLists.txt" 2>/dev/null; then
+    log_info "Patching CMakeLists.txt for older CMake..."
+    # macOS 使用 gsed，Linux 用 sed
+    if command -v gsed &> /dev/null; then
+        gsed -i 's/cmake_minimum_required(VERSION 3\.5\.\.\.4\.1)/cmake_minimum_required(VERSION 2.8)/' "${SRC_PATH}/CMakeLists.txt"
+    else
+        sed -i '' 's/cmake_minimum_required(VERSION 3\.5\.\.\.4\.1)/cmake_minimum_required(VERSION 2.8)/' "${SRC_PATH}/CMakeLists.txt" 2>/dev/null || \
+        sed -i 's/cmake_minimum_required(VERSION 3\.5\.\.\.4\.1)/cmake_minimum_required(VERSION 2.8)/' "${SRC_PATH}/CMakeLists.txt"
+    fi
+fi
+
+# 5. 创建构建目录
 cd "${SRC_PATH}"
 rm -rf build
 mkdir -p build
 cd build
 
-# 5. 配置编译选项
+# 6. 配置编译选项
 if [ "$OS_TYPE" == "linux" ]; then
     export CC="gcc"
     export CXX="g++"
@@ -32,7 +44,8 @@ if [ "$OS_TYPE" == "linux" ]; then
     cmake .. \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}" \
-        -DSTATIC_BUILD=ON
+        -DSTATIC_BUILD=ON \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
 elif [ "$OS_TYPE" == "macos" ]; then
     export CC="clang"
@@ -63,15 +76,15 @@ elif [ "$OS_TYPE" == "windows" ]; then
         -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 fi
 
-# 6. 编译
+# 7. 编译
 log_info "Compiling megahit..."
 make -j${MAKE_JOBS}
 
-# 7. 安装
+# 8. 安装
 log_info "Installing..."
 make install
 
-# 8. 验证
+# 9. 验证
 FINAL_BIN="${INSTALL_PREFIX}/bin/megahit${EXE_EXT}"
 if [ -f "$FINAL_BIN" ]; then
     log_info "Build successful!"
