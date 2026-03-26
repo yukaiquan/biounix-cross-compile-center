@@ -11,6 +11,11 @@ cd "${SRC_PATH}"
 # 保存原始路径用于复制 bin 目录
 ORIGIN_DIR=$(pwd)
 
+# 进入 src 子目录编译（LDBlockShow.cpp 在 src/ 下）
+if [ -d "src" ]; then
+    cd src
+fi
+
 # 3. 产物清理
 BIN_NAME="LDBlockShow${EXE_EXT}"
 rm -f "LDBlockShow" "LDBlockShow.exe"
