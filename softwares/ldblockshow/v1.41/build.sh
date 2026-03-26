@@ -11,14 +11,19 @@ cd "${SRC_PATH}"
 # 保存原始路径用于复制 bin 目录
 ORIGIN_DIR=$(pwd)
 
+log_info "Original directory: ${ORIGIN_DIR}"
+log_info "Checking src directory..."
+
 # 进入 src 子目录编译（LDBlockShow.cpp 在 src/ 下）
 if [ -d "src" ] && [ -f "src/LDBlockShow.cpp" ]; then
     cd src
+    log_info "Changed to src directory: $(pwd)"
 fi
 
 # 确认当前目录有 LDBlockShow.cpp
 if [ ! -f "LDBlockShow.cpp" ]; then
     log_err "LDBlockShow.cpp not found in $(pwd)"
+    log_err "Files in current directory: $(ls -la)"
     exit 1
 fi
 
