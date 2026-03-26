@@ -8,7 +8,8 @@ source config/platform.env
 
 # 2. 定位源码
 cd "${SRC_PATH}"
-[[ -d "src" ]] && cd src
+# 保存原始路径用于复制 bin 目录
+ORIGIN_DIR=$(pwd)
 
 # 3. 产物清理
 BIN_NAME="LDBlockShow${EXE_EXT}"
@@ -16,11 +17,17 @@ rm -f "LDBlockShow" "LDBlockShow.exe"
 
 log_info "Matrix Command -> OS: $OS_TYPE | ARCH: $ARCH_TYPE"
 
-# 4. 根据 OS_TYPE 执行编译
+# 4. 先复制整个 bin 目录（保留原有辅助工具）
+mkdir -p "${INSTALL_PREFIX}/bin"
+if [ -d "${ORIGIN_DIR}/bin" ]; then
+    log_info "Copying original bin directory..."
+    cp -rf "${ORIGIN_DIR}/bin/"* "${INSTALL_PREFIX}/bin/"
+fi
+
+# 5. 编译主程序
 if [ "$OS_TYPE" == "windows" ]; then
     log_info "Building for Windows..."
-    # Windows 交叉编译 - 使用 MinGW
-    # 关键：需要静态链接 zlib
+    # Windows 交叉编译
     g++ -O3 -Wall -static -static-libgcc -static-libstdc++ LDBlockShow.cpp -o "$BIN_NAME" -lz -lpthread -lws2_32
 
 elif [ "$OS_TYPE" == "macos" ]; then
@@ -44,11 +51,11 @@ else
     fi
 fi
 
-# 5. 整理产物
-mkdir -p "${INSTALL_PREFIX}/bin"
+# 6. 复制编译好的主程序（覆盖或不覆盖）
 rm -f "${INSTALL_PREFIX}/bin/LDBlockShow" "${INSTALL_PREFIX}/bin/LDBlockShow.exe"
 cp -f "$BIN_NAME" "${INSTALL_PREFIX}/bin/"
 
-# 6. 验证
+# 7. 验证
 log_info "Final Verification in Runner:"
+ls -la "${INSTALL_PREFIX}/bin/"
 file "${INSTALL_PREFIX}/bin/$BIN_NAME"

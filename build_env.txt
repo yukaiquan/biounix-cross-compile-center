@@ -1,0 +1,1 @@
+SRC_PATH=/Users/yukaiquan/.openclaw/workspace/biounix-cross-compile-center/build/LDBlockShow-1.41
