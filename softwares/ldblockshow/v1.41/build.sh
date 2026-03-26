@@ -43,8 +43,9 @@ fi
 
 # 5. 编译主程序 (使用官方 make.sh 的编译参数)
 # 官方: g++ -std=c++11 -g -O2 LDBlockShow.cpp -lm -lc -lz -o ../bin/LDBlockShow
+# 注意：Windows MinGW 不支持 -lc，需要移除
 CXX_FLAGS="-std=c++11 -O3 -Wall"
-LIBS="-lm -lc -lz"
+LIBS="-lm -lz"
 
 if [ "$OS_TYPE" == "windows" ]; then
     log_info "Building for Windows..."
