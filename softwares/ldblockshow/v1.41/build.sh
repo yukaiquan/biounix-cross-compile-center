@@ -12,8 +12,14 @@ cd "${SRC_PATH}"
 ORIGIN_DIR=$(pwd)
 
 # 进入 src 子目录编译（LDBlockShow.cpp 在 src/ 下）
-if [ -d "src" ]; then
+if [ -d "src" ] && [ -f "src/LDBlockShow.cpp" ]; then
     cd src
+fi
+
+# 确认当前目录有 LDBlockShow.cpp
+if [ ! -f "LDBlockShow.cpp" ]; then
+    log_err "LDBlockShow.cpp not found in $(pwd)"
+    exit 1
 fi
 
 # 3. 产物清理
