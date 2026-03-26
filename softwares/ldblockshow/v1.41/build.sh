@@ -35,19 +35,23 @@ if [ -d "${ORIGIN_DIR}/bin" ]; then
     cp -rf "${ORIGIN_DIR}/bin/"* "${INSTALL_PREFIX}/bin/"
 fi
 
-# 5. 编译主程序
+# 5. 编译主程序 (使用官方 make.sh 的编译参数)
+# 官方: g++ -std=c++11 -g -O2 LDBlockShow.cpp -lm -lc -lz -o ../bin/LDBlockShow
+CXX_FLAGS="-std=c++11 -O3 -Wall"
+LIBS="-lm -lc -lz"
+
 if [ "$OS_TYPE" == "windows" ]; then
     log_info "Building for Windows..."
-    # Windows 交叉编译
-    g++ -O3 -Wall -static -static-libgcc -static-libstdc++ LDBlockShow.cpp -o "$BIN_NAME" -lz -lpthread -lws2_32
+    # Windows 交叉编译 - 添加 Windows 专用库
+    g++ ${CXX_FLAGS} -static -static-libgcc -static-libstdc++ LDBlockShow.cpp -o "$BIN_NAME" ${LIBS} -lpthread -lws2_32
 
 elif [ "$OS_TYPE" == "macos" ]; then
     log_info "Building for macOS..."
     [ -d "/opt/homebrew/opt/zlib" ] && ZDIR="/opt/homebrew/opt/zlib" || ZDIR="/usr/local/opt/zlib"
     if [ -d "$ZDIR" ]; then
-        g++ -O3 -Wall -I${ZDIR}/include LDBlockShow.cpp -o "$BIN_NAME" -L${ZDIR}/lib -lz -lpthread
+        g++ ${CXX_FLAGS} -I${ZDIR}/include LDBlockShow.cpp -o "$BIN_NAME" -L${ZDIR}/lib ${LIBS} -lpthread
     else
-        g++ -O3 -Wall LDBlockShow.cpp -o "$BIN_NAME" -lz -lpthread
+        g++ ${CXX_FLAGS} LDBlockShow.cpp -o "$BIN_NAME" ${LIBS} -lpthread
     fi
 
 else
@@ -55,10 +59,10 @@ else
     log_info "Building for Linux..."
     if [ "$ARCH_TYPE" == "arm64" ]; then
         log_info "Using ARM64 Cross-Compiler"
-        aarch64-linux-gnu-g++ -O3 -Wall -static LDBlockShow.cpp -o "$BIN_NAME" -lz -lpthread
+        aarch64-linux-gnu-g++ ${CXX_FLAGS} -static LDBlockShow.cpp -o "$BIN_NAME" ${LIBS} -lpthread
     else
         log_info "Using x64 Native Compiler"
-        g++ -O3 -Wall -static LDBlockShow.cpp -o "$BIN_NAME" -lz -lpthread
+        g++ ${CXX_FLAGS} -static LDBlockShow.cpp -o "$BIN_NAME" ${LIBS} -lpthread
     fi
 fi
 
