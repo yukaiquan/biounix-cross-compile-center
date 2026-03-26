@@ -12,20 +12,10 @@ cd "${SRC_PATH}"
 ORIGIN_DIR=$(pwd)
 
 log_info "Original directory: ${ORIGIN_DIR}"
-log_info "Checking src directory..."
+log_info "Files in directory: $(ls -la | head -20)"
 
-# 进入 src 子目录编译（LDBlockShow.cpp 在 src/ 下）
-if [ -d "src" ] && [ -f "src/LDBlockShow.cpp" ]; then
-    cd src
-    log_info "Changed to src directory: $(pwd)"
-fi
-
-# 确认当前目录有 LDBlockShow.cpp
-if [ ! -f "LDBlockShow.cpp" ]; then
-    log_err "LDBlockShow.cpp not found in $(pwd)"
-    log_err "Files in current directory: $(ls -la)"
-    exit 1
-fi
+# 注意：不进入 src 目录，直接在当前目录编译
+# 原始脚本的逻辑
 
 # 3. 产物清理
 BIN_NAME="LDBlockShow${EXE_EXT}"
